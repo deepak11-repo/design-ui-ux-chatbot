@@ -1,0 +1,77 @@
+﻿@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Prevent overflow when embedded in containers */
+#root {
+  width: 100%;
+  max-width: 100%;
+  overflow-x: hidden;
+}
+
+body {
+  margin: 0;
+  padding: 0;
+  overflow-x: hidden;
+  font-family: 'Poppins', sans-serif;
+}
+
+/* Style overrides for app buttons */
+#root button:hover {
+  color: rgb(44 44 44 / var(--tw-text-opacity, 1)) !important;
+}
+
+#root button[type="button"]:hover {
+  color: rgb(44 44 44 / var(--tw-text-opacity, 1)) !important;
+  background-color: rgba(255, 229, 160, 0.2) !important;
+}
+
+/* Style overrides for SVG icons inside buttons */
+#root button:hover svg {
+  fill: rgb(44, 44, 44) !important;
+  color: rgb(44, 44, 44) !important;
+}
+
+#root button[type="button"]:hover svg {
+  fill: rgb(44, 44, 44) !important;
+  color: rgb(44, 44, 44) !important;
+}
+
+/* Ensure SVG icons maintain color even when button is hovered */
+#root button svg {
+  fill: rgb(44, 44, 44) !important;
+}
+
+/* Custom scrollbar styling */
+.custom-scrollbar::-webkit-scrollbar {
+  width: 6px;
+}
+
+.custom-scrollbar::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.custom-scrollbar::-webkit-scrollbar-thumb {
+  background: #E5E5E5;
+  border-radius: 3px;
+}
+
+.custom-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: #D0D0D0;
+}
+
+/* Fade-in animation for quick actions */
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(-5px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-fadeIn {
+  animation: fadeIn 0.3s ease-out;
+}
