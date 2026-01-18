@@ -2,6 +2,7 @@ import React from 'react';
 import { Message, MessageSender } from '../types';
 import UserAvatar from './UserAvatar';
 import BotAvatar from './BotAvatar';
+import HtmlPreview from './HtmlPreview';
 
 interface MessageBubbleProps {
   message: Message;
@@ -40,6 +41,11 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({
         <div className={`${baseBubbleClasses} ${isUser ? userBubbleClasses : botBubbleClasses}`}>
           <p className="text-xs sm:text-sm leading-5 sm:leading-6">{formattedText}</p>
         </div>
+        {!isUser && message.isHtmlMessage && message.htmlContent && (
+          <div className="mt-3 w-full max-w-4xl">
+            <HtmlPreview html={message.htmlContent} />
+          </div>
+        )}
         {!isUser && isLastBotMessage && showQuickActions && quickActionOptions.length > 0 && (
           <div className="mt-2.5 sm:mt-3 w-full animate-fadeIn">
             {/* Separate regular options from Done button */}

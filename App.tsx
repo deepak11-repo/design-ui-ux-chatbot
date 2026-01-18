@@ -20,6 +20,8 @@ const App: React.FC = () => {
     showFileUpload,
     handleFileUpload,
     getSelectedOptions,
+    isGeneratingHtml,
+    generationProgressText,
   } = useChat();
 
   const questionOptions = getCurrentQuestionOptions();
@@ -71,6 +73,8 @@ const App: React.FC = () => {
           }
           onQuickAction={handleQuickAction}
           selectedOptions={getSelectedOptions()}
+          isGeneratingHtml={isGeneratingHtml}
+          generationProgressText={generationProgressText}
         />
 
         {showFileUpload && (currentPhase === WorkflowPhase.NEW_WEBSITE_BRAND_DETAILS || currentPhase === WorkflowPhase.REDESIGN_BRAND_DETAILS) && (

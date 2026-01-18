@@ -7,16 +7,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Removed
+- Removed completion message from "New Webpage from Scratch" flow - HTML generation now starts immediately after questionnaire completion
+- Removed "Building your prompt" loader text and step from HTML generation process
+- Removed HTML download functionality - replaced with "View in new tab" option
+
 ### Added
+- Implemented LLM integration for "New Webpage from Scratch" flow using Google Gemini API
+- Added prompt system with two-part structure:
+  - Common prompt (Part 1): Includes user information and design process instructions
+  - Page-type-specific prompts (Part 2): Tailored prompts for Home, Landing, Product, Service, Portfolio, and Other page types
+- Created Gemini API service using `@google/genai` SDK with retry logic (maximum 3 retries with exponential backoff)
+- Added HTML extraction and cleaning functionality to process LLM responses
+- Implemented HTML preview component with iframe rendering and download functionality
+- Added generation loader component with animated spinner and progress text effects
+- Integrated HTML generation trigger when "New Webpage from Scratch" questionnaire is completed
+- Added support for displaying generated HTML files in chat with preview and download options
+- Implemented progress tracking during HTML generation (Building prompt → Connecting to AI → Processing HTML)
+- Added error handling with user-friendly error messages for API failures, authentication errors, and rate limits
 - Added brand guidelines question to Website Redesign flow (with file upload and text description options)
 - Added reference webpage question to Website Redesign flow (with "I don't have any" option)
 - Added competitor webpage question to Website Redesign flow (with "I don't have any" option)
 - Extended Website Redesign flow to include the same brand, inspiration, and competitor questions as the "New Webpage from Scratch" flow
+- Added HTML generation functionality that automatically triggers when "New Webpage from Scratch" flow completes
+- Added `htmlContent` and `isHtmlMessage` properties to `Message` interface for HTML preview support
+- Added `isGeneratingHtml` and `generationProgressText` state to chat hook for generation progress tracking
 
 ### Removed
 - Removed business description question ("In one or two lines, what does your business or project do?") from the Website Redesign flow - this question is now only asked in the "New Webpage from Scratch" flow
 
 ### Changed
+- Updated `Message` interface to support HTML content display with `htmlContent` and `isHtmlMessage` properties
+- Enhanced `useChat` hook to include HTML generation logic with progress tracking
+- Updated `MessageBubble` component to render HTML preview when message contains HTML content
+- Updated `ChatWindow` component to display generation loader during HTML generation
+- Modified completion flow to automatically trigger HTML generation instead of just showing completion message
+- Migrated Gemini API integration from REST API to official `@google/genai` SDK
+- Updated to use `gemini-2.5-pro` model instead of `gemini-pro`
 - **Code Refactoring & Optimization**:
   - Created `utils/responseHelpers.ts` with reusable helper functions for common patterns:
     - `isIDontHaveAny()` - Centralized check for "I don't have any" responses
@@ -93,6 +120,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 - Fixed bug where `redesignIssues` "Other" input was using comma delimiter instead of pipe delimiter
+- Fixed HTML extraction to properly handle markdown code blocks and extract clean HTML from LLM responses
+- Improved error handling for API failures with user-friendly messages and proper retry logic
 - Added error handling for missing questions in flow initialization
 - Added error handling for missing `brandDetailsText` question
 - Improved error messages with more context

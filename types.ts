@@ -8,6 +8,8 @@ export interface Message {
   id: string;
   text: string;
   sender: MessageSender;
+  htmlContent?: string; // For messages containing generated HTML
+  isHtmlMessage?: boolean; // Flag to identify HTML preview messages
 }
 
 export enum WorkflowPhase {

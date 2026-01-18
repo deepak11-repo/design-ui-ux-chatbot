@@ -3,6 +3,7 @@ import React, { useRef, useEffect } from 'react';
 import { Message, MessageSender } from '../types';
 import MessageBubble from './MessageBubble';
 import TypingIndicator from './TypingIndicator';
+import GenerationLoader from './GenerationLoader';
 
 interface ChatWindowProps {
   messages: Message[];
@@ -11,6 +12,8 @@ interface ChatWindowProps {
   quickActionOptions?: string[];
   onQuickAction?: (text: string) => void;
   selectedOptions?: string[];
+  isGeneratingHtml?: boolean;
+  generationProgressText?: string;
 }
 
 const ChatWindow: React.FC<ChatWindowProps> = ({ 
@@ -19,7 +22,9 @@ const ChatWindow: React.FC<ChatWindowProps> = ({
   showQuickActions = false,
   quickActionOptions = [],
   onQuickAction,
-  selectedOptions = []
+  selectedOptions = [],
+  isGeneratingHtml = false,
+  generationProgressText = 'Generating your webpage...'
 }) => {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -64,7 +69,8 @@ const ChatWindow: React.FC<ChatWindowProps> = ({
           />
         );
       })}
-      {isLoading && <TypingIndicator />}
+      {isGeneratingHtml && <GenerationLoader progressText={generationProgressText} />}
+      {isLoading && !isGeneratingHtml && <TypingIndicator />}
       <div ref={messagesEndRef} />
     </div>
   );

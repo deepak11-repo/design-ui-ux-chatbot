@@ -30,6 +30,10 @@ import {
   toggleMultiSelectOption,
   normalizeMultiSelectForDisplay
 } from '../utils/responseHelpers';
+import { buildCommonPrompt } from '../services/prompts/commonPrompt';
+import { getPageTypePrompt, buildFullPrompt } from '../services/prompts/pageTypePrompts';
+import { generateHtmlWithGemini, validateApiKey } from '../services/ai/geminiService';
+import { extractHtmlFromResponse } from '../services/ai/htmlProcessor';
 
 const useChat = () => {
   const [messages, setMessages] = useState<Message[]>([WELCOME_MESSAGE_1, WELCOME_MESSAGE_2]);
@@ -39,6 +43,8 @@ const useChat = () => {
   const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0);
   const [showFileUpload, setShowFileUpload] = useState(false);
   const [currentFlow, setCurrentFlow] = useState<'newWebsite' | 'redesign' | null>(null);
+  const [isGeneratingHtml, setIsGeneratingHtml] = useState(false);
+  const [generationProgressText, setGenerationProgressText] = useState('Generating your webpage...');
 
   useEffect(() => {
     const savedState = loadChatState();
@@ -122,8 +128,9 @@ const useChat = () => {
 
       if (nextIndex >= NEW_WEBSITE_QUESTION_ORDER.length) {
         // All questions completed
-        addMessage(COMPLETION_MESSAGE, MessageSender.BOT);
         setCurrentPhase(WorkflowPhase.NEW_WEBSITE_COMPLETE);
+        // Trigger HTML generation
+        generateHtml();
       } else {
         const nextQuestionKey = NEW_WEBSITE_QUESTION_ORDER[nextIndex];
         const nextQuestion = NEW_WEBSITE_QUESTIONS[nextQuestionKey];
@@ -721,6 +728,97 @@ const useChat = () => {
       addMessage("There was an error processing your files. Please try again or choose 'Describe in Text' instead.", MessageSender.BOT);
     }
   };
+
+  const generateHtml = async () => {
+    const apiKey = import.meta.env.VITE_GEMINI_API_KEY;
+
+    // Validate API key
+    if (!validateApiKey(apiKey)) {
+      addMessage(
+        "I need a Gemini API key to generate your webpage. Please set VITE_GEMINI_API_KEY in your environment file and refresh the page.",
+        MessageSender.BOT
+      );
+      return;
+    }
+
+    // Validate required fields
+    if (!userResponses.pageType) {
+      addMessage(
+        "I'm missing some information needed to generate your webpage. Please refresh and try again.",
+        MessageSender.BOT
+      );
+      return;
+    }
+
+    setIsGeneratingHtml(true);
+    setIsLoading(true);
+
+    try {
+      // Build the prompt
+      const commonPrompt = buildCommonPrompt(userResponses);
+      const pageTypePrompt = getPageTypePrompt(userResponses.pageType);
+      const fullPrompt = buildFullPrompt(commonPrompt, pageTypePrompt);
+
+      // Generate HTML
+      setGenerationProgressText('Connecting to AI...');
+      const rawResponse = await generateHtmlWithGemini(fullPrompt, apiKey);
+
+      // Process HTML
+      setGenerationProgressText('Processing HTML...');
+      const extractionResult = extractHtmlFromResponse(rawResponse);
+
+      if (!extractionResult.success) {
+        throw new Error(extractionResult.error || 'Failed to extract HTML from response');
+      }
+
+      // Generate filename
+      const pageTypeSlug = userResponses.pageType
+        .replace(/^Other:\s*/i, '')
+        .toLowerCase()
+        .replace(/\s+/g, '-');
+      const timestamp = new Date().toISOString().slice(0, 10);
+      const filename = `${pageTypeSlug}-${timestamp}.html`;
+
+      // Add success message with HTML preview
+      const htmlMessage: Message = {
+        id: `html-${Date.now()}`,
+        text: "Your webpage is ready! Here's a preview:",
+        sender: MessageSender.BOT,
+        htmlContent: extractionResult.html,
+        isHtmlMessage: true,
+      };
+      setMessages((prev) => [...prev, htmlMessage]);
+
+      setGenerationProgressText('Generating your webpage...');
+    } catch (error: any) {
+      console.error('Error generating HTML:', error);
+      
+      let errorMessage = "I encountered an error while generating your webpage. ";
+      
+      if (error.message) {
+        // Make error messages more user-friendly
+        if (error.message.includes('API key') || error.message.includes('authentication')) {
+          errorMessage = "There was an authentication error. Please check your API key configuration.";
+        } else if (error.message.includes('quota') || error.message.includes('rate limit')) {
+          errorMessage = "The API rate limit has been exceeded. Please try again in a few moments.";
+        } else if (error.message.includes('INVALID_RESPONSE') || error.message.includes('extract HTML')) {
+          errorMessage = "The AI generated an unexpected response format. Please try again.";
+        } else {
+          errorMessage += error.message;
+        }
+      } else if (error.code) {
+        errorMessage += `Error code: ${error.code}. Please try again.`;
+      } else {
+        errorMessage += "Please try again or contact support.";
+      }
+
+      addMessage(errorMessage, MessageSender.BOT);
+    } finally {
+      setIsGeneratingHtml(false);
+      setIsLoading(false);
+      setGenerationProgressText('Generating your webpage...');
+    }
+  };
   
   return { 
     messages, 
@@ -735,7 +833,9 @@ const useChat = () => {
     userResponses,
     showFileUpload,
     handleFileUpload,
-    getSelectedOptions
+    getSelectedOptions,
+    isGeneratingHtml,
+    generationProgressText
   };
 };
 
