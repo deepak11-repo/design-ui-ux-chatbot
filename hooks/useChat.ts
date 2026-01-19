@@ -32,8 +32,14 @@ import {
 } from '../utils/responseHelpers';
 import { buildCommonPrompt } from '../services/prompts/commonPrompt';
 import { getPageTypePrompt, buildFullPrompt } from '../services/prompts/pageTypePrompts';
-import { generateHtmlWithGemini, validateApiKey } from '../services/ai/geminiService';
+import { buildRedesignPrompt } from '../services/prompts/redesignPrompt';
+import { generateHtmlWithGemini, analyzeScreenshotWithGemini } from '../services/ai/geminiService';
 import { extractHtmlFromResponse } from '../services/ai/htmlProcessor';
+import { captureWebpageScreenshot } from '../services/api/apiflashService';
+import { arrayBufferToBinaryString, arrayBufferToBase64 } from '../utils/binaryUtils';
+import { UI_UX_AUDIT_PROMPT } from '../services/prompts/uiUxAuditPrompt';
+import { parseAuditResponse } from '../utils/auditParser';
+import { buildUserFriendlyErrorMessage, getAndValidateApiKey, buildMissingApiKeyMessage } from '../utils/errorMessages';
 
 const useChat = () => {
   const [messages, setMessages] = useState<Message[]>([WELCOME_MESSAGE_1, WELCOME_MESSAGE_2]);
@@ -45,6 +51,21 @@ const useChat = () => {
   const [currentFlow, setCurrentFlow] = useState<'newWebsite' | 'redesign' | null>(null);
   const [isGeneratingHtml, setIsGeneratingHtml] = useState(false);
   const [generationProgressText, setGenerationProgressText] = useState('Generating your webpage...');
+  const [isCapturingScreenshot, setIsCapturingScreenshot] = useState(false);
+  const [screenshotProgressText, setScreenshotProgressText] = useState('Analyzing your page');
+  
+  // Helper function to reset generation state
+  const resetGenerationState = () => {
+    setIsGeneratingHtml(false);
+    setIsLoading(false);
+    setGenerationProgressText('Generating your webpage...');
+  };
+  
+  // Helper function to reset screenshot state
+  const resetScreenshotState = () => {
+    setIsCapturingScreenshot(false);
+    setScreenshotProgressText('Analyzing your page');
+  };
 
   useEffect(() => {
     const savedState = loadChatState();
@@ -157,8 +178,26 @@ const useChat = () => {
 
       if (nextIndex >= REDESIGN_WEBSITE_QUESTION_ORDER.length) {
         // All redesign questions completed
-        addMessage(COMPLETION_MESSAGE, MessageSender.BOT);
         setCurrentPhase(WorkflowPhase.REDESIGN_COMPLETE);
+        
+        // Trigger API call to capture webpage screenshot if URL is provided
+        const responsesToCheck = updatedResponses || userResponses;
+        if (responsesToCheck.redesignCurrentUrl && responsesToCheck.redesignCurrentUrl.trim()) {
+          // Show loader instead of completion message
+          setIsCapturingScreenshot(true);
+          setScreenshotProgressText('Analyzing your page');
+          captureWebpageScreenshotAndLog(responsesToCheck.redesignCurrentUrl);
+        } else {
+          // No URL provided for analysis; allow user to move forward to generate redesign
+          const auditMessage: Message = {
+            id: `audit-${Date.now()}`,
+            text: 'No webpage URL was provided for analysis. You can still proceed to generate a redesigned webpage.',
+            sender: MessageSender.BOT,
+            auditIssues: ['No URL provided for analysis.'],
+            isAuditMessage: true,
+          };
+          setMessages((prev) => [...prev, auditMessage]);
+        }
       } else {
         const nextQuestionKey = REDESIGN_WEBSITE_QUESTION_ORDER[nextIndex];
         const nextQuestion = REDESIGN_WEBSITE_QUESTIONS[nextQuestionKey];
@@ -729,13 +768,212 @@ const useChat = () => {
     }
   };
 
-  const generateHtml = async () => {
-    const apiKey = import.meta.env.VITE_GEMINI_API_KEY;
+  const captureWebpageScreenshotAndLog = async (url: string) => {
+    try {
+      const apiKey = getAndValidateApiKey();
+      
+      // Validate API key
+      if (!apiKey) {
+        console.error('Gemini API key is required for screenshot analysis');
+        resetScreenshotState();
+        addMessage(
+          buildMissingApiKeyMessage('analyze your webpage screenshot'),
+          MessageSender.BOT
+        );
+        return;
+      }
+
+      // Update progress text
+      setScreenshotProgressText('Analyzing your page');
+      
+      // Small delay to show the first message
+      await new Promise(resolve => setTimeout(resolve, 1000));
+      
+      // Update progress text
+      setScreenshotProgressText('Reviewing your page');
+      
+      // Capture the webpage screenshot
+      const imageBuffer = await captureWebpageScreenshot(url);
+      
+      // Convert ArrayBuffer to binary string
+      const binaryString = arrayBufferToBinaryString(imageBuffer);
+      
+      // Convert ArrayBuffer to Uint8Array for byte-level inspection
+      const bytes = new Uint8Array(imageBuffer);
+      
+      // Console log the binary result
+      console.log('=== Webpage Screenshot Binary Data ===');
+      console.log('URL:', url);
+      console.log('Binary string:', binaryString);
+      console.log('Binary string length:', binaryString.length, 'characters');
+      console.log('Buffer size:', imageBuffer.byteLength, 'bytes');
+      console.log('First 100 bytes:', Array.from(bytes.slice(0, 100)));
+      console.log('=====================================');
+      
+      // Convert image to base64 for Gemini API
+      const imageBase64 = arrayBufferToBase64(imageBuffer);
+      
+      // Send screenshot to Gemini AI for UI/UX audit
+      const auditResponse = await analyzeScreenshotWithGemini(
+        imageBase64,
+        UI_UX_AUDIT_PROMPT,
+        apiKey
+      );
+      
+      // Console log the Gemini response
+      console.log('=== Gemini UI/UX Audit Response ===');
+      console.log(auditResponse);
+      console.log('===================================');
+      
+      // Parse the audit response to extract issues
+      const issues = parseAuditResponse(auditResponse);
+      
+      // Hide loader after binary is logged and Gemini response is received
+      resetScreenshotState();
+      
+      // Display audit issues instead of completion message
+      if (issues.length > 0) {
+        const auditMessage: Message = {
+          id: `audit-${Date.now()}`,
+          text: 'I\'ve completed the UI/UX audit of your webpage. Here are the high-impact issues I identified:',
+          sender: MessageSender.BOT,
+          auditIssues: issues,
+          isAuditMessage: true,
+        };
+        setMessages((prev) => [...prev, auditMessage]);
+      } else {
+        // Fallback message if no issues were parsed
+        // This could happen if the response format was unexpected
+        console.warn('No issues parsed from audit response. Response:', auditResponse);
+        addMessage(
+          'I\'ve completed the UI/UX audit of your webpage. The analysis didn\'t identify any critical issues, or the response format was unexpected.',
+          MessageSender.BOT
+        );
+      }
+    } catch (error: any) {
+      console.error('Error capturing webpage screenshot or analyzing with Gemini:', error);
+      resetScreenshotState();
+      addMessage(buildUserFriendlyErrorMessage(error, 'analyzing your webpage'), MessageSender.BOT);
+    }
+  };
+
+  const handleAuditContinue = async () => {
+    // User chose to move forward; generate the redesigned webpage now
+    // Validate that we have the necessary information
+    if (!userResponses.redesignAudience) {
+      addMessage(
+        "I'm missing some information needed to generate your redesigned webpage. Please refresh and try again.",
+        MessageSender.BOT
+      );
+      return;
+    }
+    
+    // Start the generation process with a 1-minute delay to space out API calls
+    // This helps avoid rate limit issues after the analysis step
+    await generateRedesignHtmlWithDelay();
+  };
+
+  const generateRedesignHtmlWithDelay = async () => {
+    const apiKey = getAndValidateApiKey();
 
     // Validate API key
-    if (!validateApiKey(apiKey)) {
+    if (!apiKey) {
       addMessage(
-        "I need a Gemini API key to generate your webpage. Please set VITE_GEMINI_API_KEY in your environment file and refresh the page.",
+        buildMissingApiKeyMessage('generate your redesigned webpage'),
+        MessageSender.BOT
+      );
+      return;
+    }
+
+    // Show loader immediately
+    setIsGeneratingHtml(true);
+    setIsLoading(true);
+
+    try {
+      // 1-minute delay to space out API calls and avoid rate limits
+      // Show countdown/progress messages during the wait
+      const delayMs = 60000; // 1 minute
+      const updateInterval = 10000; // Update message every 10 seconds
+      const startTime = Date.now();
+      
+      const updateProgress = () => {
+        const elapsed = Date.now() - startTime;
+        const remaining = Math.ceil((delayMs - elapsed) / 1000);
+        
+        if (remaining > 0) {
+          setGenerationProgressText(`Preparing to generate your redesigned webpage... (${remaining}s)`);
+        } else {
+          setGenerationProgressText('Preparing to generate your redesigned webpage...');
+        }
+      };
+
+      // Update progress immediately
+      updateProgress();
+      
+      // Update progress every 10 seconds during the wait
+      const progressInterval = setInterval(() => {
+        const elapsed = Date.now() - startTime;
+        if (elapsed < delayMs) {
+          updateProgress();
+        } else {
+          clearInterval(progressInterval);
+        }
+      }, updateInterval);
+
+      // Wait for the delay period
+      await new Promise(resolve => setTimeout(resolve, delayMs));
+      clearInterval(progressInterval);
+
+      // Now proceed with generation
+      await generateRedesignHtml(apiKey);
+    } catch (error: any) {
+      console.error('Error in delayed generation process:', error);
+      addMessage(buildUserFriendlyErrorMessage(error, 'generating your redesigned webpage'), MessageSender.BOT);
+      resetGenerationState();
+    }
+  };
+
+  const generateRedesignHtml = async (apiKey: string) => {
+    try {
+      // Build the redesign prompt from redesign-specific inputs
+      const fullPrompt = buildRedesignPrompt(userResponses);
+
+      // Generate HTML
+      setGenerationProgressText('Connecting to AI...');
+      const rawResponse = await generateHtmlWithGemini(fullPrompt, apiKey);
+
+      // Process HTML
+      setGenerationProgressText('Processing HTML...');
+      const extractionResult = extractHtmlFromResponse(rawResponse);
+
+      if (!extractionResult.success) {
+        throw new Error(extractionResult.error || 'Failed to extract HTML from response');
+      }
+
+      // Add success message with HTML preview
+      const htmlMessage: Message = {
+        id: `html-redesign-${Date.now()}`,
+        text: "Your redesigned webpage is ready! Here's a preview:",
+        sender: MessageSender.BOT,
+        htmlContent: extractionResult.html,
+        isHtmlMessage: true,
+      };
+      setMessages((prev) => [...prev, htmlMessage]);
+    } catch (error: any) {
+      console.error('Error generating redesigned HTML:', error);
+      addMessage(buildUserFriendlyErrorMessage(error, 'generating your redesigned webpage'), MessageSender.BOT);
+    } finally {
+      resetGenerationState();
+    }
+  };
+
+  const generateHtml = async () => {
+    const apiKey = getAndValidateApiKey();
+
+    // Validate API key
+    if (!apiKey) {
+      addMessage(
+        buildMissingApiKeyMessage('generate your webpage'),
         MessageSender.BOT
       );
       return;
@@ -771,14 +1009,6 @@ const useChat = () => {
         throw new Error(extractionResult.error || 'Failed to extract HTML from response');
       }
 
-      // Generate filename
-      const pageTypeSlug = userResponses.pageType
-        .replace(/^Other:\s*/i, '')
-        .toLowerCase()
-        .replace(/\s+/g, '-');
-      const timestamp = new Date().toISOString().slice(0, 10);
-      const filename = `${pageTypeSlug}-${timestamp}.html`;
-
       // Add success message with HTML preview
       const htmlMessage: Message = {
         id: `html-${Date.now()}`,
@@ -788,35 +1018,11 @@ const useChat = () => {
         isHtmlMessage: true,
       };
       setMessages((prev) => [...prev, htmlMessage]);
-
-      setGenerationProgressText('Generating your webpage...');
     } catch (error: any) {
       console.error('Error generating HTML:', error);
-      
-      let errorMessage = "I encountered an error while generating your webpage. ";
-      
-      if (error.message) {
-        // Make error messages more user-friendly
-        if (error.message.includes('API key') || error.message.includes('authentication')) {
-          errorMessage = "There was an authentication error. Please check your API key configuration.";
-        } else if (error.message.includes('quota') || error.message.includes('rate limit')) {
-          errorMessage = "The API rate limit has been exceeded. Please try again in a few moments.";
-        } else if (error.message.includes('INVALID_RESPONSE') || error.message.includes('extract HTML')) {
-          errorMessage = "The AI generated an unexpected response format. Please try again.";
-        } else {
-          errorMessage += error.message;
-        }
-      } else if (error.code) {
-        errorMessage += `Error code: ${error.code}. Please try again.`;
-      } else {
-        errorMessage += "Please try again or contact support.";
-      }
-
-      addMessage(errorMessage, MessageSender.BOT);
+      addMessage(buildUserFriendlyErrorMessage(error, 'generating your webpage'), MessageSender.BOT);
     } finally {
-      setIsGeneratingHtml(false);
-      setIsLoading(false);
-      setGenerationProgressText('Generating your webpage...');
+      resetGenerationState();
     }
   };
   
@@ -835,7 +1041,10 @@ const useChat = () => {
     handleFileUpload,
     getSelectedOptions,
     isGeneratingHtml,
-    generationProgressText
+    generationProgressText,
+    isCapturingScreenshot,
+    screenshotProgressText,
+    handleAuditContinue
   };
 };
 

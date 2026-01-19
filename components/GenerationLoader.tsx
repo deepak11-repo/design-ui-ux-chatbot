@@ -4,10 +4,12 @@ import React from 'react';
 
 interface GenerationLoaderProps {
   progressText?: string;
+  showSteps?: boolean;
 }
 
 const GenerationLoader: React.FC<GenerationLoaderProps> = ({ 
-  progressText = 'Generating your webpage...' 
+  progressText = 'Generating your webpage...',
+  showSteps = true,
 }) => {
   const [dots, setDots] = React.useState('');
 
@@ -44,16 +46,18 @@ const GenerationLoader: React.FC<GenerationLoaderProps> = ({
       </div>
 
       {/* Progress Steps Animation */}
-      <div className="w-full max-w-md space-y-2">
-        <div className="flex items-center space-x-2 text-sm text-gray-500">
-          <div className="w-2 h-2 bg-blue-500 rounded-full animate-pulse"></div>
-          <span>Connecting to AI</span>
+      {showSteps && (
+        <div className="w-full max-w-md space-y-2">
+          <div className="flex items-center space-x-2 text-sm text-gray-500">
+            <div className="w-2 h-2 bg-blue-500 rounded-full animate-pulse"></div>
+            <span>Connecting to AI</span>
+          </div>
+          <div className="flex items-center space-x-2 text-sm text-gray-500">
+            <div className="w-2 h-2 bg-purple-500 rounded-full animate-pulse" style={{ animationDelay: '200ms' }}></div>
+            <span>Generating design</span>
+          </div>
         </div>
-        <div className="flex items-center space-x-2 text-sm text-gray-500">
-          <div className="w-2 h-2 bg-purple-500 rounded-full animate-pulse" style={{ animationDelay: '200ms' }}></div>
-          <span>Generating design</span>
-        </div>
-      </div>
+      )}
     </div>
   );
 };

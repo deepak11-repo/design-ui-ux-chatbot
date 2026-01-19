@@ -10,6 +10,8 @@ export interface Message {
   sender: MessageSender;
   htmlContent?: string; // For messages containing generated HTML
   isHtmlMessage?: boolean; // Flag to identify HTML preview messages
+  auditIssues?: string[]; // For messages containing UI/UX audit issues
+  isAuditMessage?: boolean; // Flag to identify audit result messages
 }
 
 export enum WorkflowPhase {

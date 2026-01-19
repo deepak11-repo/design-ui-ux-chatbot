@@ -7,6 +7,63 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **Code Refactoring & Modularization**:
+  - Extracted common Gemini API client creation and params building logic into `geminiApiHelpers.ts` module
+  - Created centralized error message utilities in `utils/errorMessages.ts` for consistent user-friendly error handling
+  - Extracted API key validation logic into reusable `getAndValidateApiKey()` function
+  - Removed duplicate error handling code between `generateHtml()` and `generateRedesignHtml()` functions
+  - Added helper functions `resetGenerationState()` and `resetScreenshotState()` to reduce code duplication
+  - Removed unused `filename` variable from `generateHtml()` function
+  - Improved progress text reset logic to only reset on cleanup, not on success
+- **Error Handling Improvements**:
+  - Added specific handling for 503 Service Unavailable errors with retry logic
+  - Enhanced `handleGeminiError()` to detect 503 errors and mark them as retryable
+  - Unified error message building across all API calls using `buildUserFriendlyErrorMessage()`
+  - Added validation in `handleAuditContinue()` to ensure redesign can proceed before generating HTML
+- Refactored Gemini API error handling to use centralized `geminiErrorHandler.ts` module
+- Extracted common retry logic into reusable `retryHandler.ts` with exponential backoff
+- Moved ArrayBuffer conversion utilities to shared `binaryUtils.ts` module
+- Removed duplicate error handling code from `callGeminiApi` and `callGeminiApiWithImage` functions
+- Removed duplicate retry logic from `generateHtmlWithGemini` and `analyzeScreenshotWithGemini` functions
+- Fixed duplicate progress text setting ("Analyzing it..." was set twice)
+- Improved error messages for better user experience with specific error types
+- Added image size validation before processing (7MB limit for Gemini API)
+- Enhanced audit response parser to better handle edge cases and formatting
+- Improved fallback message when no audit issues are parsed
+- Added redesigned HTML generation flow for the Webpage Redesign route using a dedicated redesign prompt (same AI approach as scratch route, different prompt content)
+- Updated Webpage Redesign flow so analysis runs first and redesign generation starts only after the user clicks "Move Forward"
+- Updated analysis loader messaging to "Analyzing your page" and "Reviewing your page"
+- Updated audit action button label from "Click here to move further" to "Move Forward"
+- Enabled Google Search tool for all Gemini 2.5 Flash requests (HTML generation and analysis) to improve grounding and relevance
+
+### Added
+- Added Apiflash API integration for webpage redesign flow to capture screenshots of user-provided URLs
+- Created `apiflashService.ts` with functions to capture webpage screenshots and convert PNG images to binary format
+- Integrated automatic screenshot capture when redesign flow completes and a URL is provided
+- Added console logging of binary screenshot data for debugging purposes
+- Added animated loader for webpage redesign flow that displays progress messages ("Reviewing your current webpage design..." and "Analyzing it...") during screenshot capture
+- Loader remains visible until binary screenshot data is logged to console
+- Added Gemini AI integration to analyze webpage screenshots using gemini-2.5-flash model with image input support
+- Created `analyzeScreenshotWithGemini()` function to send base64-encoded images to Gemini API
+- Added UI/UX audit prompt for comprehensive webpage design evaluation
+- Integrated automatic UI/UX audit analysis after screenshot capture completes
+- Added console logging of Gemini AI audit response
+- Created `AuditResults` component to display UI/UX audit issues in a structured, visually appealing format
+- Added `parseAuditResponse()` utility function to extract issues from Gemini audit response
+- Added `auditIssues` and `isAuditMessage` properties to `Message` interface for audit result display
+
+### Changed
+- Replaced completion message with animated loader during webpage redesign screenshot capture process
+- Loader automatically hides and shows audit results after screenshot capture and Gemini analysis completes
+- Enhanced screenshot capture flow to include Gemini AI analysis step after binary data is obtained
+- Updated UI/UX audit prompt output format to use direct issue descriptions only (removed location labels)
+- Limited UI/UX audit output to maximum 5 issues (reduced from 8-12)
+- Replaced generic completion message with structured display of identified UI/UX audit issues
+- Audit issues are now displayed in a visually organized format with numbered badges, color-coded cards, and clear typography
+- Adjusted font sizes in AuditResults component to match overall chatbot font size (text-xs sm:text-sm for issues, text-sm sm:text-base for header)
+- Added "Click here to move further" button below audit results that displays completion message when clicked
+
 ### Removed
 - Removed completion message from "New Webpage from Scratch" flow - HTML generation now starts immediately after questionnaire completion
 - Removed "Building your prompt" loader text and step from HTML generation process

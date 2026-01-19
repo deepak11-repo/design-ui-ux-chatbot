@@ -3,6 +3,7 @@ import { Message, MessageSender } from '../types';
 import UserAvatar from './UserAvatar';
 import BotAvatar from './BotAvatar';
 import HtmlPreview from './HtmlPreview';
+import AuditResults from './AuditResults';
 
 interface MessageBubbleProps {
   message: Message;
@@ -11,6 +12,7 @@ interface MessageBubbleProps {
   onQuickAction?: (text: string) => void;
   isLastBotMessage?: boolean;
   selectedOptions?: string[];
+  onAuditContinue?: () => void;
 }
 
 const MessageBubble: React.FC<MessageBubbleProps> = ({ 
@@ -19,7 +21,8 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({
   quickActionOptions = [],
   onQuickAction,
   isLastBotMessage = false,
-  selectedOptions = []
+  selectedOptions = [],
+  onAuditContinue
 }) => {
   const isUser = message.sender === MessageSender.USER;
 
@@ -45,6 +48,12 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({
           <div className="mt-3 w-full max-w-4xl">
             <HtmlPreview html={message.htmlContent} />
           </div>
+        )}
+        {!isUser && message.isAuditMessage && message.auditIssues && (
+          <AuditResults 
+            issues={message.auditIssues} 
+            onContinue={onAuditContinue}
+          />
         )}
         {!isUser && isLastBotMessage && showQuickActions && quickActionOptions.length > 0 && (
           <div className="mt-2.5 sm:mt-3 w-full animate-fadeIn">

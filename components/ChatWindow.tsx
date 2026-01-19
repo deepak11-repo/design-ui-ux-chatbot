@@ -14,6 +14,9 @@ interface ChatWindowProps {
   selectedOptions?: string[];
   isGeneratingHtml?: boolean;
   generationProgressText?: string;
+  isCapturingScreenshot?: boolean;
+  screenshotProgressText?: string;
+  onAuditContinue?: () => void;
 }
 
 const ChatWindow: React.FC<ChatWindowProps> = ({ 
@@ -24,7 +27,10 @@ const ChatWindow: React.FC<ChatWindowProps> = ({
   onQuickAction,
   selectedOptions = [],
   isGeneratingHtml = false,
-  generationProgressText = 'Generating your webpage...'
+  generationProgressText = 'Generating your webpage...',
+  isCapturingScreenshot = false,
+  screenshotProgressText = 'Analyzing your page',
+  onAuditContinue
 }) => {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -66,11 +72,13 @@ const ChatWindow: React.FC<ChatWindowProps> = ({
             onQuickAction={onQuickAction}
             isLastBotMessage={isLastBotMessage}
             selectedOptions={isLastBotMessage ? selectedOptions : []}
+            onAuditContinue={onAuditContinue}
           />
         );
       })}
       {isGeneratingHtml && <GenerationLoader progressText={generationProgressText} />}
-      {isLoading && !isGeneratingHtml && <TypingIndicator />}
+      {isCapturingScreenshot && <GenerationLoader progressText={screenshotProgressText} showSteps={false} />}
+      {isLoading && !isGeneratingHtml && !isCapturingScreenshot && <TypingIndicator />}
       <div ref={messagesEndRef} />
     </div>
   );

@@ -22,6 +22,9 @@ const App: React.FC = () => {
     getSelectedOptions,
     isGeneratingHtml,
     generationProgressText,
+    isCapturingScreenshot,
+    screenshotProgressText,
+    handleAuditContinue,
   } = useChat();
 
   const questionOptions = getCurrentQuestionOptions();
@@ -75,6 +78,9 @@ const App: React.FC = () => {
           selectedOptions={getSelectedOptions()}
           isGeneratingHtml={isGeneratingHtml}
           generationProgressText={generationProgressText}
+          isCapturingScreenshot={isCapturingScreenshot}
+          screenshotProgressText={screenshotProgressText}
+          onAuditContinue={handleAuditContinue}
         />
 
         {showFileUpload && (currentPhase === WorkflowPhase.NEW_WEBSITE_BRAND_DETAILS || currentPhase === WorkflowPhase.REDESIGN_BRAND_DETAILS) && (
@@ -83,7 +89,7 @@ const App: React.FC = () => {
           </div>
         )}
 
-        {currentPhase !== WorkflowPhase.NEW_WEBSITE_COMPLETE && currentPhase !== WorkflowPhase.REDESIGN_COMPLETE && !showFileUpload && showInput && (
+        {currentPhase !== WorkflowPhase.NEW_WEBSITE_COMPLETE && currentPhase !== WorkflowPhase.REDESIGN_COMPLETE && !showFileUpload && !isCapturingScreenshot && showInput && (
           <InputBar 
             onSendMessage={sendMessage} 
             isLoading={isLoading} 
