@@ -12,6 +12,10 @@ export interface Message {
   isHtmlMessage?: boolean; // Flag to identify HTML preview messages
   auditIssues?: string[]; // For messages containing UI/UX audit issues
   isAuditMessage?: boolean; // Flag to identify audit result messages
+  isRatingPrompt?: boolean; // Flag to show rating UI
+  isFeedbackPrompt?: boolean; // Flag to show feedback input UI
+  isEmailPrompt?: boolean; // Flag to show email input UI
+  isReferencesAndCompetitorsPrompt?: boolean; // Flag to show references/competitors multi-entry UI
 }
 
 export enum WorkflowPhase {
@@ -29,10 +33,12 @@ export enum WorkflowPhase {
   NEW_WEBSITE_INSPIRATION_LINKS = 'NewWebsiteInspirationLinks',
   NEW_WEBSITE_HAS_COMPETITORS = 'NewWebsiteHasCompetitors',
   NEW_WEBSITE_COMPETITORS = 'NewWebsiteCompetitors',
+  NEW_WEBSITE_REFERENCES_AND_COMPETITORS = 'NewWebsiteReferencesAndCompetitors',
   NEW_WEBSITE_COMPLETE = 'NewWebsiteComplete',
   // Website Redesign flow
   REDESIGN_ROLE = 'RedesignRole',
   REDESIGN_CURRENT_URL = 'RedesignCurrentUrl',
+  REDESIGN_REUSE_CONTENT = 'RedesignReuseContent',
   REDESIGN_TYPE = 'RedesignType',
   REDESIGN_BUSINESS = 'RedesignBusiness',
   REDESIGN_AUDIENCE = 'RedesignAudience',
@@ -43,6 +49,7 @@ export enum WorkflowPhase {
   REDESIGN_BRAND_DETAILS = 'RedesignBrandDetails',
   REDESIGN_INSPIRATION_LINKS = 'RedesignInspirationLinks',
   REDESIGN_COMPETITORS = 'RedesignCompetitors',
+  REDESIGN_REFERENCES_AND_COMPETITORS = 'RedesignReferencesAndCompetitors',
   REDESIGN_COMPLETE = 'RedesignComplete',
 }
 
@@ -60,10 +67,12 @@ export interface UserResponses {
   inspirationLinks?: string;
   hasCompetitors?: boolean;
   competitors?: string;
+  referencesAndCompetitors?: string; // Combined field for references and competitors
   waitingForOtherInput?: 'pageType' | 'redesignIssues'; // Track which field is waiting for "Other" input
 
   // Website Redesign responses
   redesignCurrentUrl?: string;
+  redesignReuseContent?: boolean;
   redesignBusiness?: string;
   redesignAudience?: string;
   redesignIssues?: string;
@@ -75,4 +84,5 @@ export interface UserResponses {
   redesignInspirationLinks?: string;
   redesignHasCompetitors?: boolean;
   redesignCompetitors?: string;
+  redesignReferencesAndCompetitors?: string; // Combined field for references and competitors
 }

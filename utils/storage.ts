@@ -1,5 +1,7 @@
 // File: ./utils/storage.ts
 
+import { logger } from './logger';
+
 const STORAGE_KEY = 'designChatState';
 
 export interface ChatState {
@@ -32,12 +34,12 @@ export const loadChatState = (): ChatState | null => {
     }
     return null;
   } catch (error) {
-    console.error("Could not load chat state:", error);
+    logger.error("Could not load chat state:", error);
     // Clear corrupted state
     try {
       localStorage.removeItem(STORAGE_KEY);
     } catch (clearError) {
-      console.error("Could not clear corrupted chat state:", clearError);
+      logger.error("Could not clear corrupted chat state:", clearError);
     }
     return null;
   }
@@ -61,14 +63,14 @@ export const saveChatState = (state: Omit<ChatState, 'userResponses'> & { userRe
     localStorage.setItem(STORAGE_KEY, chatState);
     return true;
   } catch (error) {
-    console.error("Could not save chat state:", error);
+    logger.error("Could not save chat state:", error);
     // Handle quota exceeded error
     if (error instanceof DOMException && error.name === 'QuotaExceededError') {
-      console.warn("LocalStorage quota exceeded. Clearing old state.");
+      logger.warn("LocalStorage quota exceeded. Clearing old state.");
       try {
         localStorage.removeItem(STORAGE_KEY);
       } catch (clearError) {
-        console.error("Could not clear localStorage:", clearError);
+        logger.error("Could not clear localStorage:", clearError);
       }
     }
     return false;
@@ -82,7 +84,7 @@ export const clearChatState = (): void => {
   try {
     localStorage.removeItem(STORAGE_KEY);
   } catch (error) {
-    console.error("Could not clear chat state:", error);
+    logger.error("Could not clear chat state:", error);
   }
 };
 

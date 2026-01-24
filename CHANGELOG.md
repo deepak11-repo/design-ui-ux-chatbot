@@ -7,7 +7,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Added "reuse existing content" question to redesign flow: after collecting current URL, prompts user with Yes/No options to indicate if they want to reuse existing webpage content.
+- Added centralized logger utility (`utils/logger.ts`) for consistent logging with dev-only debug logs.
+- Added question navigation helper utilities (`utils/questionNavigation.ts`) to reduce code duplication.
+
 ### Changed
+- Simplified brand guidelines question in "New Website from Scratch" flow: replaced yes/no question with file upload/text description options with a single text input field. Question text updated to "Do you have any existing design rules regarding colors, fonts, or styling?" with "I don't have any" as a quick action option. Removed file upload functionality and brandDetails/brandDetailsText follow-up questions from the new website flow.
+- Updated references/competitors question: removed word "emulate" from question text (now reads "review" instead of "emulate or review"). Improved placeholder text in input fields to be more user-friendly: "Enter website URL" and "What did you like about this website?" (replacing technical examples with conversational prompts).
+
+### Changed
+- Improved logging: Replaced direct `console.log/error/warn` calls with centralized logger utility. Debug logs are now suppressed in production builds.
+- Refactored question navigation logic: Extracted duplicate code into reusable helper functions for better maintainability.
+- Fixed "I don't have any" button visibility: Button now reappears when all entries are removed in ReferencesAndCompetitorsPrompt.
+- Removed unused import: `normalizeUrlsInText` from `useChat.ts`.
+- Cleaned up commented-out code: Removed obsolete brand question skip logic from `questionHelpers.ts`.
+- Standardized phase checks: Replaced hardcoded phase string comparisons with helper function `isReferencesAndCompetitorsPhase()`.
+
+### Changed
+- Replaced single text input for references/competitors question with a multi-entry form component: "I don't have any" option displayed as a quick action button above the inputs, with two input fields (URL and description) styled to match the standard InputBar component (same position, padding, border, and styling), an "Add" icon to add entries (up to 3), individual remove options for each entry, and a "Done" button to submit. Input fields and add icon are hidden when "I don't have any" is selected. "I don't have any" option is hidden once at least one entry is added.
+- URL normalization: Automatically prepends `https://` to domain-only inputs (e.g., `example.com` → `https://example.com`) across all URL input fields in the chatbot for consistent validation and processing.
+- Combined reference and competitor questions into a single question for both redesign and scratch flows: "Could you share links to your top 3 reference or competitor websites, briefly explaining which design elements you would like us to emulate or review (e.g., layout, navigation, typography)?"
+- Removed brand guidelines question ("Do you have existing brand guidelines?") and related follow-up questions from the webpage redesign flow.
+- Anthropic: capped dynamic max_tokens to 64,000 (per model limit) while retaining heuristic `400,000 - estimated_input_tokens - 3,000` with 1,000 floor.
+- Anthropic: switched to streaming for long responses, retains dynamic max_tokens heuristic (`400,000 - estimated_input_tokens - 3,000`, min 1,000), and logs token usage from streamed responses.
+- Anthropic: dynamic max_tokens now mirrors OpenAI heuristic (`400,000 - estimated_input_tokens - 3,000`, floored at 1,000) and logs input/output tokens.
+- OpenAI: dynamic max_output_tokens now uses heuristic `400,000 - input_tokens_est - 3,000` (floor 1,000) and logs token usage (input/output) for responses.
+- Added token usage console logging for Anthropic and Gemini (including Gemini image analysis).
+- Updated inspiration and competitor questions to request both links and the specific design aspects liked or to focus on (layout, typography, palette, interactions, navigation, CTAs).
+- Added a design-model selector (Gemini/OpenAI/Anthropic) for webpage generation while keeping analysis on Gemini; selection applies to both scratch and redesign flows with provider-specific key validation.
+- Added post-design rating + feedback + email capture flow for both routes (redesign and scratch) with interactive stars, conditional feedback for ratings below 4, and mandatory email collection before closing the session.
+- Switched the **New Webpage from Scratch** generation route from OpenAI to Anthropic (prompt logic unchanged; OpenAI/Gemini code kept commented for comparison/testing).
 - **Code Refactoring & Modularization**:
   - Extracted common Gemini API client creation and params building logic into `geminiApiHelpers.ts` module
   - Created centralized error message utilities in `utils/errorMessages.ts` for consistent user-friendly error handling

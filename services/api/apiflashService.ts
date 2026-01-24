@@ -1,6 +1,8 @@
 // File: ./services/api/apiflashService.ts
 
 import { arrayBufferToBinaryString, arrayBufferToBase64, validateImageSize } from '../../utils/binaryUtils';
+import { normalizeUrl } from '../../utils/validation';
+import { logger } from '../../utils/logger';
 
 const APIFLASH_ACCESS_KEY = '7076c97250914b6fb1e9af79784e4ce0';
 const APIFLASH_BASE_URL = 'https://api.apiflash.com/v1/urltoimage';
@@ -19,11 +21,8 @@ export async function captureWebpageScreenshot(url: string): Promise<ArrayBuffer
       throw new Error('URL is required');
     }
 
-    // Ensure URL is properly formatted
-    let formattedUrl = url.trim();
-    if (!formattedUrl.startsWith('http://') && !formattedUrl.startsWith('https://')) {
-      formattedUrl = `https://${formattedUrl}`;
-    }
+    // Normalize URL (prepend https:// if domain-only)
+    const formattedUrl = normalizeUrl(url.trim());
 
     // Build API URL with query parameters
     const params = new URLSearchParams({
@@ -59,7 +58,7 @@ export async function captureWebpageScreenshot(url: string): Promise<ArrayBuffer
 
     return imageBuffer;
   } catch (error: any) {
-    console.error('Error capturing webpage screenshot:', error);
+    logger.error('Error capturing webpage screenshot:', error);
     throw new Error(`Failed to capture webpage screenshot: ${error.message}`);
   }
 }

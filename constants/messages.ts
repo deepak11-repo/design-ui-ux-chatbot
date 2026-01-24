@@ -7,9 +7,10 @@ export const VALIDATION_MESSAGES = {
   business: "Please tell me about your business. This information is important.",
   audience: "Please describe your target audience. This helps us design better for your users.",
   goals: "Please share your webpage goals. This helps us prioritize features and design elements.",
-  brandDetails: "Please share details about your brand guidelines. This information helps us design according to your brand identity.",
+  brandDetails: "Please share your design rules (colors, fonts, styling) or select 'I don't have any'.",
   inspirationLinks: "I didn't detect any webpage links. Please paste the URLs (e.g., https://example.com).",
   competitors: "I didn't detect any webpage links. Please paste the URLs (e.g., https://example.com) or select 'I don't have any'.",
+  referencesAndCompetitors: "I didn't detect any webpage links. Please paste the URLs (e.g., https://example.com) or select 'I don't have any'.",
 } as const;
 
 /**

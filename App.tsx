@@ -25,6 +25,13 @@ const App: React.FC = () => {
     isCapturingScreenshot,
     screenshotProgressText,
     handleAuditContinue,
+    handleRatingSubmit,
+    handleFeedbackSubmit,
+    handleEmailSubmit,
+    handleReferencesAndCompetitorsSubmit,
+    handleDesignProviderChange,
+    designProvider,
+    sessionClosed,
   } = useChat();
 
   const questionOptions = getCurrentQuestionOptions();
@@ -51,7 +58,22 @@ const App: React.FC = () => {
               </p>
             </div>
           </div>
+          <div className="flex items-center space-x-3">
           <div className="flex items-center space-x-2">
+              <label htmlFor="design-provider" className="text-xs sm:text-sm text-[#222222] font-medium whitespace-nowrap">
+                Design model
+              </label>
+              <select
+                id="design-provider"
+                value={designProvider}
+                onChange={(e) => handleDesignProviderChange(e.target.value as 'anthropic' | 'openai' | 'gemini')}
+                className="text-xs sm:text-sm border border-[#E5E5E5] rounded-lg px-2 py-1 bg-white focus:outline-none focus:ring-2 focus:ring-[#2563EB]/40 focus:border-[#2563EB]"
+              >
+                <option value="anthropic">Anthropic</option>
+                <option value="openai">OpenAI</option>
+                <option value="gemini">Gemini</option>
+              </select>
+            </div>
             <span className="relative flex h-3 w-3">
               <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-[#2ca03d] opacity-75"></span>
               <span className="relative inline-flex rounded-full h-3 w-3 bg-[#2ca03d]"></span>
@@ -81,6 +103,10 @@ const App: React.FC = () => {
           isCapturingScreenshot={isCapturingScreenshot}
           screenshotProgressText={screenshotProgressText}
           onAuditContinue={handleAuditContinue}
+          onRatingSubmit={handleRatingSubmit}
+          onFeedbackSubmit={handleFeedbackSubmit}
+          onEmailSubmit={handleEmailSubmit}
+          onReferencesAndCompetitorsSubmit={handleReferencesAndCompetitorsSubmit}
         />
 
         {showFileUpload && (currentPhase === WorkflowPhase.NEW_WEBSITE_BRAND_DETAILS || currentPhase === WorkflowPhase.REDESIGN_BRAND_DETAILS) && (
@@ -89,7 +115,7 @@ const App: React.FC = () => {
           </div>
         )}
 
-        {currentPhase !== WorkflowPhase.NEW_WEBSITE_COMPLETE && currentPhase !== WorkflowPhase.REDESIGN_COMPLETE && !showFileUpload && !isCapturingScreenshot && showInput && (
+        {currentPhase !== WorkflowPhase.NEW_WEBSITE_COMPLETE && currentPhase !== WorkflowPhase.REDESIGN_COMPLETE && !showFileUpload && !isCapturingScreenshot && showInput && !sessionClosed && (
           <InputBar 
             onSendMessage={sendMessage} 
             isLoading={isLoading} 

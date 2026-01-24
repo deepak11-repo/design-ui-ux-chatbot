@@ -19,7 +19,8 @@ import {
   isYesResponse,
   isSkipAction
 } from '../utils/questionHelpers';
-import { hasUrls } from '../utils/validation';
+import { getNextQuestionInfo, isReferencesAndCompetitorsPhase } from '../utils/questionNavigation';
+import { hasUrls, normalizeUrl } from '../utils/validation';
 import { loadChatState, saveChatState } from '../utils/storage';
 import { VALIDATION_MESSAGES, OTHER_INPUT_MESSAGES, COMPLETION_MESSAGE } from '../constants/messages';
 import { 
@@ -33,13 +34,17 @@ import {
 import { buildCommonPrompt } from '../services/prompts/commonPrompt';
 import { getPageTypePrompt, buildFullPrompt } from '../services/prompts/pageTypePrompts';
 import { buildRedesignPrompt } from '../services/prompts/redesignPrompt';
-import { generateHtmlWithGemini, analyzeScreenshotWithGemini } from '../services/ai/geminiService';
+import { analyzeScreenshotWithGemini, generateHtmlWithGemini } from '../services/ai/geminiService';
+import { generateHtmlWithAnthropic } from '../services/ai/anthropicService';
+import { generateHtmlWithOpenAI } from '../services/ai/openaiService';
 import { extractHtmlFromResponse } from '../services/ai/htmlProcessor';
 import { captureWebpageScreenshot } from '../services/api/apiflashService';
 import { arrayBufferToBinaryString, arrayBufferToBase64 } from '../utils/binaryUtils';
 import { UI_UX_AUDIT_PROMPT } from '../services/prompts/uiUxAuditPrompt';
 import { parseAuditResponse } from '../utils/auditParser';
-import { buildUserFriendlyErrorMessage, getAndValidateApiKey, buildMissingApiKeyMessage } from '../utils/errorMessages';
+import { buildUserFriendlyErrorMessage, getAndValidateApiKey, getAndValidateAnthropicApiKey, getAndValidateOpenAIApiKey, buildMissingApiKeyMessage } from '../utils/errorMessages';
+import { logger } from '../utils/logger';
+// Note: getAndValidateApiKey is used for Gemini (analysis), getAndValidateAnthropicApiKey/getAndValidateOpenAIApiKey are used for design generation depending on selection
 
 const useChat = () => {
   const [messages, setMessages] = useState<Message[]>([WELCOME_MESSAGE_1, WELCOME_MESSAGE_2]);
@@ -53,6 +58,11 @@ const useChat = () => {
   const [generationProgressText, setGenerationProgressText] = useState('Generating your webpage...');
   const [isCapturingScreenshot, setIsCapturingScreenshot] = useState(false);
   const [screenshotProgressText, setScreenshotProgressText] = useState('Analyzing your page');
+  const [sessionClosed, setSessionClosed] = useState(false);
+  const [ratingRequested, setRatingRequested] = useState(false);
+  const [ratingCompleted, setRatingCompleted] = useState(false);
+  const [ratingScore, setRatingScore] = useState<number | null>(null);
+  const [designProvider, setDesignProvider] = useState<'anthropic' | 'openai' | 'gemini'>('anthropic');
   
   // Helper function to reset generation state
   const resetGenerationState = () => {
@@ -65,6 +75,102 @@ const useChat = () => {
   const resetScreenshotState = () => {
     setIsCapturingScreenshot(false);
     setScreenshotProgressText('Analyzing your page');
+  };
+
+  const enqueueRatingPrompt = () => {
+    if (sessionClosed || ratingRequested) return;
+    setRatingRequested(true);
+    addMessage(
+      'Please rate this design from 1 to 5 (1 = needs work, 5 = love it).',
+      MessageSender.BOT,
+      { isRatingPrompt: true }
+    );
+  };
+
+  const handleRatingSubmit = (score: number) => {
+    if (ratingCompleted || sessionClosed) return;
+    setRatingCompleted(true);
+    setRatingScore(score);
+
+    // Log user rating as a message
+    addMessage(`I rate this design ${score}/5`, MessageSender.USER);
+
+    if (score < 4) {
+      addMessage(
+        "Thanks for the honesty! What didn't you like about the design?",
+        MessageSender.BOT,
+        { isFeedbackPrompt: true }
+      );
+    } else {
+      addMessage(
+        'Great! Please share your email so we can connect you with an engineer.',
+        MessageSender.BOT,
+        { isEmailPrompt: true }
+      );
+    }
+  };
+
+  const handleFeedbackSubmit = (feedback: string) => {
+    if (sessionClosed) return;
+    addMessage(feedback, MessageSender.USER);
+    addMessage(
+      'Thanks for sharing. Please drop your email so an engineer can connect with you.',
+      MessageSender.BOT,
+      { isEmailPrompt: true }
+    );
+  };
+
+  const handleEmailSubmit = (email: string) => {
+    if (sessionClosed) return;
+    addMessage(email, MessageSender.USER);
+    addMessage(
+      'Thanks! An engineer will connect with you shortly. Closing the session now.',
+      MessageSender.BOT
+    );
+    setSessionClosed(true);
+  };
+
+  const handleReferencesAndCompetitorsSubmit = (entries: Array<{ url: string; description: string }>) => {
+    if (sessionClosed) return;
+    
+    // Store as formatted string (empty if "I don't have any" was selected)
+    const updatedResponses = { ...userResponses };
+    const currentQuestion = getCurrentQuestion();
+    
+    let displayMessage: string;
+    let storedValue: string;
+    
+    if (entries.length === 0) {
+      // User selected "I don't have any"
+      displayMessage = "I don't have any";
+      storedValue = '';
+    } else {
+      // Format entries as a readable string
+      displayMessage = entries.map((entry, index) => 
+        `${index + 1}. ${entry.url} - ${entry.description}`
+      ).join('\n');
+      storedValue = displayMessage;
+    }
+    
+    if (currentQuestion && isReferencesAndCompetitorsPhase(currentQuestion.phase)) {
+      if (currentQuestion.phase === 'NewWebsiteReferencesAndCompetitors') {
+        updatedResponses.referencesAndCompetitors = storedValue;
+      } else if (currentQuestion.phase === 'RedesignReferencesAndCompetitors') {
+        updatedResponses.redesignReferencesAndCompetitors = storedValue;
+      }
+    }
+    
+    setUserResponses(updatedResponses);
+    
+    // Display user's response as a message
+    addMessage(displayMessage, MessageSender.USER);
+    
+    // Move to next question
+    moveToNextQuestion(updatedResponses);
+  };
+
+  const handleDesignProviderChange = (provider: 'anthropic' | 'openai' | 'gemini') => {
+    setDesignProvider(provider);
   };
 
   useEffect(() => {
@@ -97,12 +203,13 @@ const useChat = () => {
   // Counter to ensure unique message IDs even when messages are created in the same millisecond
   const messageIdCounterRef = useRef(0);
 
-  const addMessage = (text: string, sender: MessageSender) => {
+  const addMessage = (text: string, sender: MessageSender, extra?: Partial<Message>) => {
     messageIdCounterRef.current += 1;
     const newMessage: Message = { 
       id: `${Date.now()}-${messageIdCounterRef.current}`, 
       text, 
-      sender
+      sender,
+      ...extra,
     };
     setMessages(prev => [...prev, newMessage]);
     return newMessage;
@@ -124,13 +231,13 @@ const useChat = () => {
 
     const questionKey = questionOrder[currentQuestionIndex];
     if (!questionKey) {
-      console.warn(`Invalid question index: ${currentQuestionIndex} for flow: ${currentFlow}`);
+      logger.warn(`Invalid question index: ${currentQuestionIndex} for flow: ${currentFlow}`);
       return null;
     }
 
     const question = questions[questionKey];
     if (!question) {
-      console.warn(`Question not found for key: ${questionKey} in flow: ${currentFlow}`);
+      logger.warn(`Question not found for key: ${questionKey} in flow: ${currentFlow}`);
       return null;
     }
 
@@ -147,24 +254,23 @@ const useChat = () => {
         responsesToCheck
       );
 
-      if (nextIndex >= NEW_WEBSITE_QUESTION_ORDER.length) {
+      const nextQuestionInfo = getNextQuestionInfo(
+        nextIndex,
+        NEW_WEBSITE_QUESTION_ORDER,
+        NEW_WEBSITE_QUESTIONS,
+        'newWebsite'
+      );
+
+      if (!nextQuestionInfo) {
         // All questions completed
         setCurrentPhase(WorkflowPhase.NEW_WEBSITE_COMPLETE);
         // Trigger HTML generation
         generateHtml();
       } else {
-        const nextQuestionKey = NEW_WEBSITE_QUESTION_ORDER[nextIndex];
-        const nextQuestion = NEW_WEBSITE_QUESTIONS[nextQuestionKey];
-        
-        if (!nextQuestion) {
-          console.error(`Question not found for key: ${nextQuestionKey} at index ${nextIndex}`);
-          addMessage("I encountered an error. Please refresh the page and try again.", MessageSender.BOT);
-          return;
-        }
-        
-        setCurrentQuestionIndex(nextIndex);
-        setCurrentPhase(getPhaseFromString(nextQuestion.phase));
-        addMessage(nextQuestion.question, MessageSender.BOT);
+        setCurrentQuestionIndex(nextQuestionInfo.index);
+        setCurrentPhase(getPhaseFromString(nextQuestionInfo.question.phase));
+        const isRefsAndCompetitors = isReferencesAndCompetitorsPhase(nextQuestionInfo.question.phase);
+        addMessage(nextQuestionInfo.question.question, MessageSender.BOT, { isReferencesAndCompetitorsPrompt: isRefsAndCompetitors });
       }
       return;
     }
@@ -187,7 +293,7 @@ const useChat = () => {
           setIsCapturingScreenshot(true);
           setScreenshotProgressText('Analyzing your page');
           captureWebpageScreenshotAndLog(responsesToCheck.redesignCurrentUrl);
-        } else {
+      } else {
           // No URL provided for analysis; allow user to move forward to generate redesign
           const auditMessage: Message = {
             id: `audit-${Date.now()}`,
@@ -199,18 +305,23 @@ const useChat = () => {
           setMessages((prev) => [...prev, auditMessage]);
         }
       } else {
-        const nextQuestionKey = REDESIGN_WEBSITE_QUESTION_ORDER[nextIndex];
-        const nextQuestion = REDESIGN_WEBSITE_QUESTIONS[nextQuestionKey];
+        const nextQuestionInfo = getNextQuestionInfo(
+          nextIndex,
+          REDESIGN_WEBSITE_QUESTION_ORDER,
+          REDESIGN_WEBSITE_QUESTIONS,
+          'redesign'
+        );
         
-        if (!nextQuestion) {
-          console.error(`Redesign question not found for key: ${nextQuestionKey} at index ${nextIndex}`);
+        if (!nextQuestionInfo) {
+          logger.error(`Redesign question navigation failed at index ${nextIndex}`);
           addMessage("I encountered an error. Please refresh the page and try again.", MessageSender.BOT);
           return;
         }
         
-        setCurrentQuestionIndex(nextIndex);
-        setCurrentPhase(getPhaseFromString(nextQuestion.phase));
-        addMessage(nextQuestion.question, MessageSender.BOT);
+        setCurrentQuestionIndex(nextQuestionInfo.index);
+        setCurrentPhase(getPhaseFromString(nextQuestionInfo.question.phase));
+        const isRefsAndCompetitors = isReferencesAndCompetitorsPhase(nextQuestionInfo.question.phase);
+        addMessage(nextQuestionInfo.question.question, MessageSender.BOT, { isReferencesAndCompetitorsPrompt: isRefsAndCompetitors });
       }
     }
   };
@@ -299,88 +410,26 @@ const useChat = () => {
       updatedResponses.pageType = response;
       updatedResponses.waitingForOtherInput = undefined;
     } else if (currentQuestion.phase === 'NewWebsiteBrand') {
-      updatedResponses.hasBrand = isYesResponse(response);
-      setUserResponses(updatedResponses);
-      // Move to next question with updated responses to ensure correct skip logic
-      moveToNextQuestion(updatedResponses);
-      return;
-    } else if (currentQuestion.phase === 'NewWebsiteBrandDetails') {
-      // User chose upload or text method
-      if (response === 'Upload Files') {
-        updatedResponses.brandDetailsMethod = 'upload';
-        setUserResponses(updatedResponses);
-        setShowFileUpload(true);
-        addMessage("Please upload your brand guideline files (logo, color palette, fonts, etc.). You can drag and drop files or click to browse.", MessageSender.BOT);
-        return; // Wait for file upload
-      } else if (response === 'Describe in Text') {
-        updatedResponses.brandDetailsMethod = 'text';
-        // Move to brandDetailsText question
-        setUserResponses(updatedResponses);
-        const textQuestionIndex = NEW_WEBSITE_QUESTION_ORDER.indexOf('brandDetailsText');
-        if (textQuestionIndex !== -1) {
-          const textQuestion = NEW_WEBSITE_QUESTIONS['brandDetailsText'];
-          if (textQuestion) {
-            setCurrentQuestionIndex(textQuestionIndex);
-            setCurrentPhase(getPhaseFromString(textQuestion.phase));
-            addMessage(textQuestion.question, MessageSender.BOT);
-          } else {
-            console.error('brandDetailsText question not found');
-            addMessage("I encountered an error. Please refresh the page and try again.", MessageSender.BOT);
-          }
-        } else {
-          console.error('brandDetailsText question index not found');
-          addMessage("I encountered an error. Please refresh the page and try again.", MessageSender.BOT);
-        }
-        return;
-      }
-    } else if (currentQuestion.phase === 'NewWebsiteBrandDetails' && userResponses.brandDetailsMethod === 'text') {
-      // This handles the text input for brand details (when phase is still NewWebsiteBrandDetails but method is text)
-      const validationError = validateNonEmpty(response, VALIDATION_MESSAGES.brandDetails);
-      if (validationError) {
-        addMessage(validationError, MessageSender.BOT);
-        return;
-      }
-      updatedResponses.brandDetails = response.trim();
-    } else if (currentQuestion.phase === 'NewWebsiteInspirationLinks') {
       // Check if user selected "I don't have any"
       if (isIDontHaveAny(response)) {
-        updatedResponses.inspirationLinks = '';
-        updatedResponses.hasInspiration = false;
+        updatedResponses.brandDetails = '';
+        // Store empty string to indicate "I don't have any"
       } else {
-        // Check for URLs
-        if (hasUrls(response)) {
-          updatedResponses.inspirationLinks = response;
-          updatedResponses.hasInspiration = true;
-        } else {
-          // No links found, ask again
-          addMessage(VALIDATION_MESSAGES.inspirationLinks, MessageSender.BOT);
-          setUserResponses(updatedResponses);
+        // Validate non-empty response
+        const validationError = validateNonEmpty(response, VALIDATION_MESSAGES.brandDetails);
+        if (validationError) {
+          addMessage(validationError, MessageSender.BOT);
           return;
         }
-      }
-    } else if (currentQuestion.phase === 'NewWebsiteCompetitors') {
-      // Check if user selected "I don't have any"
-      if (isIDontHaveAny(response)) {
-        updatedResponses.competitors = '';
-        updatedResponses.hasCompetitors = false;
-      } else {
-        // Check for URLs
-        if (hasUrls(response)) {
-          updatedResponses.competitors = response;
-          updatedResponses.hasCompetitors = true;
-        } else {
-          // No links found, ask again
-          addMessage(VALIDATION_MESSAGES.competitors, MessageSender.BOT);
-          setUserResponses(updatedResponses);
-          return;
-        }
+        updatedResponses.brandDetails = response.trim();
       }
     }
+    // ReferencesAndCompetitors is now handled by the custom component, not text input
 
     setUserResponses(updatedResponses);
 
     // Move to next question
-    moveToNextQuestion();
+    moveToNextQuestion(updatedResponses);
   };
 
   const handleRedesignResponse = (response: string) => {
@@ -403,15 +452,24 @@ const useChat = () => {
       if (!response.trim()) {
         updatedResponses.redesignCurrentUrl = '';
       } else {
+        // Normalize URL (prepend https:// if domain-only)
+        const normalizedResponse = normalizeUrl(response.trim());
+        
         // Validate URL if provided
-        if (!hasUrls(response)) {
-          addMessage("I didn't detect a valid webpage URL. Please paste the full URL (e.g., https://example.com), or leave it blank if you don't have one.", MessageSender.BOT);
+        if (!hasUrls(normalizedResponse)) {
+          addMessage("I didn't detect a valid webpage URL. Please paste the full URL (e.g., https://example.com or example.com), or leave it blank if you don't have one.", MessageSender.BOT);
           setUserResponses(updatedResponses);
           return;
         }
-        updatedResponses.redesignCurrentUrl = response.trim();
+        updatedResponses.redesignCurrentUrl = normalizedResponse;
       }
       // Continue to move to next question
+    } else if (currentQuestion.phase === 'RedesignReuseContent') {
+      updatedResponses.redesignReuseContent = isYesResponse(response);
+      setUserResponses(updatedResponses);
+      // Move to next question with updated responses
+      moveToNextQuestion(updatedResponses);
+      return;
     } else if (currentQuestion.phase === 'RedesignAudience') {
       const validationError = validateNonEmpty(response, VALIDATION_MESSAGES.audience);
       if (validationError) {
@@ -464,86 +522,8 @@ const useChat = () => {
 
       // Otherwise, treat as a free-text description and move on
       updatedResponses.redesignIssues = trimmed;
-    } else if (currentQuestion.phase === 'RedesignBrand') {
-      updatedResponses.redesignHasBrand = isYesResponse(response);
-      setUserResponses(updatedResponses);
-      // Move to next question with updated responses to ensure correct skip logic
-      moveToNextQuestion(updatedResponses);
-      return;
-    } else if (currentQuestion.phase === 'RedesignBrandDetails') {
-      // User chose upload or text method
-      if (response === 'Upload Files') {
-        updatedResponses.redesignBrandDetailsMethod = 'upload';
-        setUserResponses(updatedResponses);
-        setShowFileUpload(true);
-        addMessage("Please upload your brand guideline files (logo, color palette, fonts, etc.). You can drag and drop files or click to browse.", MessageSender.BOT);
-        return; // Wait for file upload
-      } else if (response === 'Describe in Text') {
-        updatedResponses.redesignBrandDetailsMethod = 'text';
-        // Move to redesignBrandDetailsText question
-        setUserResponses(updatedResponses);
-        const textQuestionIndex = REDESIGN_WEBSITE_QUESTION_ORDER.indexOf('redesignBrandDetailsText');
-        if (textQuestionIndex !== -1) {
-          const textQuestion = REDESIGN_WEBSITE_QUESTIONS['redesignBrandDetailsText'];
-          if (textQuestion) {
-            setCurrentQuestionIndex(textQuestionIndex);
-            setCurrentPhase(getPhaseFromString(textQuestion.phase));
-            addMessage(textQuestion.question, MessageSender.BOT);
-          } else {
-            console.error('redesignBrandDetailsText question not found');
-            addMessage("I encountered an error. Please refresh the page and try again.", MessageSender.BOT);
-          }
-        } else {
-          console.error('redesignBrandDetailsText question index not found');
-          addMessage("I encountered an error. Please refresh the page and try again.", MessageSender.BOT);
-        }
-        return;
-      }
-    } else if (currentQuestion.phase === 'RedesignBrandDetails' && userResponses.redesignBrandDetailsMethod === 'text') {
-      // This handles the text input for brand details (when phase is still RedesignBrandDetails but method is text)
-      const validationError = validateNonEmpty(response, VALIDATION_MESSAGES.brandDetails);
-      if (validationError) {
-        addMessage(validationError, MessageSender.BOT);
-        setUserResponses(updatedResponses);
-        return;
-      }
-      updatedResponses.redesignBrandDetails = response.trim();
-      // Continue to move to next question
-    } else if (currentQuestion.phase === 'RedesignInspirationLinks') {
-      // Check if user selected "I don't have any"
-      if (isIDontHaveAny(response)) {
-        updatedResponses.redesignInspirationLinks = '';
-        updatedResponses.redesignHasInspiration = false;
-      } else {
-        // Check for URLs
-        if (hasUrls(response)) {
-          updatedResponses.redesignInspirationLinks = response;
-          updatedResponses.redesignHasInspiration = true;
-        } else {
-          // No links found, ask again
-          addMessage(VALIDATION_MESSAGES.inspirationLinks, MessageSender.BOT);
-          setUserResponses(updatedResponses);
-          return;
-        }
-      }
-    } else if (currentQuestion.phase === 'RedesignCompetitors') {
-      // Check if user selected "I don't have any"
-      if (isIDontHaveAny(response)) {
-        updatedResponses.redesignCompetitors = '';
-        updatedResponses.redesignHasCompetitors = false;
-      } else {
-        // Check for URLs
-        if (hasUrls(response)) {
-          updatedResponses.redesignCompetitors = response;
-          updatedResponses.redesignHasCompetitors = true;
-        } else {
-          // No links found, ask again
-          addMessage(VALIDATION_MESSAGES.competitors, MessageSender.BOT);
-          setUserResponses(updatedResponses);
-          return;
-        }
-      }
     }
+    // RedesignReferencesAndCompetitors is now handled by the custom component, not text input
 
     setUserResponses(updatedResponses);
     moveToNextQuestion(updatedResponses);
@@ -556,12 +536,13 @@ const useChat = () => {
       setCurrentFlow('newWebsite');
       const firstQuestion = NEW_WEBSITE_QUESTIONS[NEW_WEBSITE_QUESTION_ORDER[0]];
       if (!firstQuestion) {
-        console.error('First question not found in new website flow');
+        logger.error('First question not found in new website flow');
         addMessage("I encountered an error starting the flow. Please refresh the page and try again.", MessageSender.BOT);
         return;
       }
       setCurrentPhase(getPhaseFromString(firstQuestion.phase));
-      addMessage(firstQuestion.question, MessageSender.BOT);
+      const isRefsAndCompetitors = isReferencesAndCompetitorsPhase(firstQuestion.phase);
+      addMessage(firstQuestion.question, MessageSender.BOT, { isReferencesAndCompetitorsPrompt: isRefsAndCompetitors });
     }, 500);
   };
 
@@ -572,12 +553,13 @@ const useChat = () => {
       setCurrentFlow('redesign');
       const firstQuestion = REDESIGN_WEBSITE_QUESTIONS[REDESIGN_WEBSITE_QUESTION_ORDER[0]];
       if (!firstQuestion) {
-        console.error('First question not found in redesign flow');
+        logger.error('First question not found in redesign flow');
         addMessage("I encountered an error starting the flow. Please refresh the page and try again.", MessageSender.BOT);
         return;
       }
       setCurrentPhase(getPhaseFromString(firstQuestion.phase));
-      addMessage(firstQuestion.question, MessageSender.BOT);
+      const isRefsAndCompetitors = isReferencesAndCompetitorsPhase(firstQuestion.phase);
+      addMessage(firstQuestion.question, MessageSender.BOT, { isReferencesAndCompetitorsPrompt: isRefsAndCompetitors });
     }, 500);
   };
 
@@ -596,7 +578,7 @@ const useChat = () => {
   };
 
   const sendMessage = (text: string) => {
-    if (isLoading || !text.trim()) return;
+    if (sessionClosed || isLoading || !text.trim()) return;
     
     addMessage(text, MessageSender.USER);
     
@@ -653,15 +635,7 @@ const useChat = () => {
     
     const options = currentQuestion.options || [];
     
-    // Add "I don't have any" option for inspiration links question
-    if (currentQuestion.phase === 'NewWebsiteInspirationLinks' || currentQuestion.phase === 'RedesignInspirationLinks') {
-      return ['I don\'t have any'];
-    }
-    
-    // Add "I don't have any" option for competitors question
-    if (currentQuestion.phase === 'NewWebsiteCompetitors' || currentQuestion.phase === 'RedesignCompetitors') {
-      return ['I don\'t have any'];
-    }
+    // ReferencesAndCompetitors uses custom component, not quick actions
     
     return options;
   };
@@ -675,20 +649,17 @@ const useChat = () => {
     const currentQuestion = getCurrentQuestion();
     if (!currentQuestion) return false;
     
-    // Show quick actions for quick/yesno questions, and also for questions with "I don't have any" option
+    // Show quick actions for quick/yesno questions, and also for text questions with options (like "I don't have any")
     if (currentQuestion.type === 'quick' || currentQuestion.type === 'yesno') {
       return true;
     }
     
-    // Show quick actions for inspirationLinks question (has "I don't have any" option)
-    if (currentQuestion.phase === 'NewWebsiteInspirationLinks' || currentQuestion.phase === 'RedesignInspirationLinks') {
+    // Show quick actions for text questions that have options (e.g., "I don't have any")
+    if (currentQuestion.type === 'text' && currentQuestion.options && currentQuestion.options.length > 0) {
       return true;
     }
     
-    // Show quick actions for competitors question (has "I don't have any" option)
-    if (currentQuestion.phase === 'NewWebsiteCompetitors' || currentQuestion.phase === 'RedesignCompetitors') {
-      return true;
-    }
+    // ReferencesAndCompetitors uses custom component, not quick actions
     
     return false;
   };
@@ -716,9 +687,19 @@ const useChat = () => {
   };
 
   const shouldShowInputBar = () => {
+    if (sessionClosed) {
+      return false;
+    }
+    
     // Hide input bar in initial phase when quick actions are available
     if (currentPhase === WorkflowPhase.INITIAL) {
       return false; // Only quick action buttons are shown, no input needed
+    }
+    
+    // Hide input bar for references/competitors question (uses custom component)
+    const currentQuestion = getCurrentQuestion();
+    if (currentQuestion && isReferencesAndCompetitorsPhase(currentQuestion.phase)) {
+      return false;
     }
     
     // Show input bar when waiting for "Other" input
@@ -727,7 +708,6 @@ const useChat = () => {
     }
     
     // Show input bar for text-type questions (free-form input required)
-    const currentQuestion = getCurrentQuestion();
     if (currentQuestion && currentQuestion.type === 'text') {
       return true;
     }
@@ -763,7 +743,7 @@ const useChat = () => {
         moveToNextQuestion(updatedResponses);
       }, 500);
     } catch (error) {
-      console.error("Error handling file upload:", error);
+      logger.error("Error handling file upload:", error);
       addMessage("There was an error processing your files. Please try again or choose 'Describe in Text' instead.", MessageSender.BOT);
     }
   };
@@ -771,15 +751,15 @@ const useChat = () => {
   const captureWebpageScreenshotAndLog = async (url: string) => {
     try {
       const apiKey = getAndValidateApiKey();
-      
-      // Validate API key
+
+    // Validate API key
       if (!apiKey) {
-        console.error('Gemini API key is required for screenshot analysis');
+        logger.error('Gemini API key is required for screenshot analysis');
         resetScreenshotState();
-        addMessage(
+      addMessage(
           buildMissingApiKeyMessage('analyze your webpage screenshot'),
-          MessageSender.BOT
-        );
+        MessageSender.BOT
+      );
         return;
       }
 
@@ -801,14 +781,12 @@ const useChat = () => {
       // Convert ArrayBuffer to Uint8Array for byte-level inspection
       const bytes = new Uint8Array(imageBuffer);
       
-      // Console log the binary result
-      console.log('=== Webpage Screenshot Binary Data ===');
-      console.log('URL:', url);
-      console.log('Binary string:', binaryString);
-      console.log('Binary string length:', binaryString.length, 'characters');
-      console.log('Buffer size:', imageBuffer.byteLength, 'bytes');
-      console.log('First 100 bytes:', Array.from(bytes.slice(0, 100)));
-      console.log('=====================================');
+      // Debug log the binary result (dev only)
+      logger.debug('=== Webpage Screenshot Binary Data ===');
+      logger.debug('URL:', url);
+      logger.debug('Binary string length:', binaryString.length, 'characters');
+      logger.debug('Buffer size:', imageBuffer.byteLength, 'bytes');
+      logger.debug('First 100 bytes:', Array.from(bytes.slice(0, 100)));
       
       // Convert image to base64 for Gemini API
       const imageBase64 = arrayBufferToBase64(imageBuffer);
@@ -820,10 +798,9 @@ const useChat = () => {
         apiKey
       );
       
-      // Console log the Gemini response
-      console.log('=== Gemini UI/UX Audit Response ===');
-      console.log(auditResponse);
-      console.log('===================================');
+      // Debug log the Gemini response (dev only)
+      logger.debug('=== Gemini UI/UX Audit Response ===');
+      logger.debug(auditResponse);
       
       // Parse the audit response to extract issues
       const issues = parseAuditResponse(auditResponse);
@@ -844,14 +821,14 @@ const useChat = () => {
       } else {
         // Fallback message if no issues were parsed
         // This could happen if the response format was unexpected
-        console.warn('No issues parsed from audit response. Response:', auditResponse);
+        logger.warn('No issues parsed from audit response. Response:', auditResponse);
         addMessage(
           'I\'ve completed the UI/UX audit of your webpage. The analysis didn\'t identify any critical issues, or the response format was unexpected.',
           MessageSender.BOT
         );
       }
     } catch (error: any) {
-      console.error('Error capturing webpage screenshot or analyzing with Gemini:', error);
+      logger.error('Error capturing webpage screenshot or analyzing with Gemini:', error);
       resetScreenshotState();
       addMessage(buildUserFriendlyErrorMessage(error, 'analyzing your webpage'), MessageSender.BOT);
     }
@@ -874,14 +851,32 @@ const useChat = () => {
   };
 
   const generateRedesignHtmlWithDelay = async () => {
-    const apiKey = getAndValidateApiKey();
+    // Use selected provider for redesign generation (Gemini still used for analysis)
+    const providerConfig = (() => {
+      if (designProvider === 'anthropic') {
+        return {
+          key: getAndValidateAnthropicApiKey(),
+          missingMsg: buildMissingApiKeyMessage('generate your redesigned webpage', false, true),
+          fn: generateHtmlWithAnthropic,
+        };
+      }
+      if (designProvider === 'openai') {
+        return {
+          key: getAndValidateOpenAIApiKey(),
+          missingMsg: buildMissingApiKeyMessage('generate your redesigned webpage', true, false),
+          fn: generateHtmlWithOpenAI,
+        };
+      }
+      // default to Gemini for generation if selected
+      return {
+        key: getAndValidateApiKey(),
+        missingMsg: buildMissingApiKeyMessage('generate your redesigned webpage', false, false),
+        fn: generateHtmlWithGemini,
+      };
+    })();
 
-    // Validate API key
-    if (!apiKey) {
-      addMessage(
-        buildMissingApiKeyMessage('generate your redesigned webpage'),
-        MessageSender.BOT
-      );
+    if (!providerConfig.key) {
+      addMessage(providerConfig.missingMsg, MessageSender.BOT);
       return;
     }
 
@@ -925,22 +920,22 @@ const useChat = () => {
       clearInterval(progressInterval);
 
       // Now proceed with generation
-      await generateRedesignHtml(apiKey);
+      await generateRedesignHtml(providerConfig.key, providerConfig.fn);
     } catch (error: any) {
-      console.error('Error in delayed generation process:', error);
+      logger.error('Error in delayed generation process:', error);
       addMessage(buildUserFriendlyErrorMessage(error, 'generating your redesigned webpage'), MessageSender.BOT);
       resetGenerationState();
     }
   };
 
-  const generateRedesignHtml = async (apiKey: string) => {
+  const generateRedesignHtml = async (apiKey: string, generateFn: (prompt: string, apiKey: string) => Promise<string>) => {
     try {
       // Build the redesign prompt from redesign-specific inputs
       const fullPrompt = buildRedesignPrompt(userResponses);
 
-      // Generate HTML
+      // Generate HTML using selected provider (Gemini/OpenAI/Anthropic) for redesign route
       setGenerationProgressText('Connecting to AI...');
-      const rawResponse = await generateHtmlWithGemini(fullPrompt, apiKey);
+      const rawResponse = await generateFn(fullPrompt, apiKey);
 
       // Process HTML
       setGenerationProgressText('Processing HTML...');
@@ -959,8 +954,9 @@ const useChat = () => {
         isHtmlMessage: true,
       };
       setMessages((prev) => [...prev, htmlMessage]);
+      enqueueRatingPrompt();
     } catch (error: any) {
-      console.error('Error generating redesigned HTML:', error);
+      logger.error('Error generating redesigned HTML:', error);
       addMessage(buildUserFriendlyErrorMessage(error, 'generating your redesigned webpage'), MessageSender.BOT);
     } finally {
       resetGenerationState();
@@ -968,14 +964,32 @@ const useChat = () => {
   };
 
   const generateHtml = async () => {
-    const apiKey = getAndValidateApiKey();
+    // Use selected provider for scratch route generation
+    const providerConfig = (() => {
+      if (designProvider === 'anthropic') {
+        return {
+          key: getAndValidateAnthropicApiKey(),
+          missingMsg: buildMissingApiKeyMessage('generate your webpage', false, true),
+          fn: generateHtmlWithAnthropic,
+        };
+      }
+      if (designProvider === 'openai') {
+        return {
+          key: getAndValidateOpenAIApiKey(),
+          missingMsg: buildMissingApiKeyMessage('generate your webpage', true, false),
+          fn: generateHtmlWithOpenAI,
+        };
+      }
+      return {
+        key: getAndValidateApiKey(),
+        missingMsg: buildMissingApiKeyMessage('generate your webpage', false, false),
+        fn: generateHtmlWithGemini,
+      };
+    })();
 
     // Validate API key
-    if (!apiKey) {
-      addMessage(
-        buildMissingApiKeyMessage('generate your webpage'),
-        MessageSender.BOT
-      );
+    if (!providerConfig.key) {
+      addMessage(providerConfig.missingMsg, MessageSender.BOT);
       return;
     }
 
@@ -992,14 +1006,14 @@ const useChat = () => {
     setIsLoading(true);
 
     try {
-      // Build the prompt
+      // Build the prompt (keeping the same prompt as before)
       const commonPrompt = buildCommonPrompt(userResponses);
       const pageTypePrompt = getPageTypePrompt(userResponses.pageType);
       const fullPrompt = buildFullPrompt(commonPrompt, pageTypePrompt);
 
       // Generate HTML
       setGenerationProgressText('Connecting to AI...');
-      const rawResponse = await generateHtmlWithGemini(fullPrompt, apiKey);
+      const rawResponse = await providerConfig.fn(fullPrompt, providerConfig.key);
 
       // Process HTML
       setGenerationProgressText('Processing HTML...');
@@ -1018,8 +1032,9 @@ const useChat = () => {
         isHtmlMessage: true,
       };
       setMessages((prev) => [...prev, htmlMessage]);
+      enqueueRatingPrompt();
     } catch (error: any) {
-      console.error('Error generating HTML:', error);
+      logger.error('Error generating HTML:', error);
       addMessage(buildUserFriendlyErrorMessage(error, 'generating your webpage'), MessageSender.BOT);
     } finally {
       resetGenerationState();
@@ -1044,7 +1059,14 @@ const useChat = () => {
     generationProgressText,
     isCapturingScreenshot,
     screenshotProgressText,
-    handleAuditContinue
+    handleAuditContinue,
+    handleRatingSubmit,
+    handleFeedbackSubmit,
+    handleEmailSubmit,
+    handleReferencesAndCompetitorsSubmit,
+    handleDesignProviderChange,
+    designProvider,
+    sessionClosed
   };
 };
 

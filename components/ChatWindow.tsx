@@ -17,6 +17,10 @@ interface ChatWindowProps {
   isCapturingScreenshot?: boolean;
   screenshotProgressText?: string;
   onAuditContinue?: () => void;
+  onRatingSubmit?: (score: number) => void;
+  onFeedbackSubmit?: (feedback: string) => void;
+  onEmailSubmit?: (email: string) => void;
+  onReferencesAndCompetitorsSubmit?: (entries: Array<{ url: string; description: string }>) => void;
 }
 
 const ChatWindow: React.FC<ChatWindowProps> = ({ 
@@ -30,7 +34,11 @@ const ChatWindow: React.FC<ChatWindowProps> = ({
   generationProgressText = 'Generating your webpage...',
   isCapturingScreenshot = false,
   screenshotProgressText = 'Analyzing your page',
-  onAuditContinue
+  onAuditContinue,
+  onRatingSubmit,
+  onFeedbackSubmit,
+  onEmailSubmit,
+  onReferencesAndCompetitorsSubmit
 }) => {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -73,6 +81,10 @@ const ChatWindow: React.FC<ChatWindowProps> = ({
             isLastBotMessage={isLastBotMessage}
             selectedOptions={isLastBotMessage ? selectedOptions : []}
             onAuditContinue={onAuditContinue}
+            onRatingSubmit={onRatingSubmit}
+            onFeedbackSubmit={onFeedbackSubmit}
+            onEmailSubmit={onEmailSubmit}
+            onReferencesAndCompetitorsSubmit={onReferencesAndCompetitorsSubmit}
           />
         );
       })}

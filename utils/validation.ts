@@ -1,18 +1,76 @@
 // File: ./utils/validation.ts
 
 /**
- * Validates if a string contains valid URLs
+ * Normalizes a URL by prepending https:// if it's a domain-only input
+ * @param url - The URL string to normalize
+ * @returns Normalized URL with protocol if needed
+ */
+export const normalizeUrl = (url: string): string => {
+  const trimmed = url.trim();
+  if (!trimmed) return trimmed;
+  
+  // If it already has a protocol, return as-is
+  if (/^https?:\/\//i.test(trimmed)) {
+    return trimmed;
+  }
+  
+  // Check if it looks like a domain (contains at least one dot and no spaces)
+  // Pattern: domain.com, www.domain.com, subdomain.domain.com, etc.
+  const domainPattern = /^([a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}(\/.*)?$/;
+  if (domainPattern.test(trimmed) && !trimmed.includes(' ')) {
+    return `https://${trimmed}`;
+  }
+  
+  // Return as-is if it doesn't match domain pattern
+  return trimmed;
+};
+
+/**
+ * Normalizes all URLs in a text string
+ * @param text - The text containing URLs
+ * @returns Text with normalized URLs
+ */
+export const normalizeUrlsInText = (text: string): string => {
+  // Split by common delimiters (space, comma, newline, pipe)
+  const parts = text.split(/(\s+|,|\n|\|)/);
+  return parts.map(part => {
+    // Only normalize parts that look like URLs/domains
+    if (/^[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/.test(part.trim()) && !part.includes(' ')) {
+      return normalizeUrl(part);
+    }
+    return part;
+  }).join('');
+};
+
+/**
+ * Validates if a string contains valid URLs (including domain-only patterns)
  * @param text - The text to validate
  * @returns Array of found URLs or null if none found
  */
 export const extractUrls = (text: string): string[] | null => {
-  const urlRegex = /(https?:\/\/[^\s]+)/gi;
-  const matches = text.match(urlRegex);
-  return matches && matches.length > 0 ? matches : null;
+  // First, try to find URLs with protocol
+  const urlRegex = /(https?:\/\/[^\s,|]+)/gi;
+  const protocolMatches = text.match(urlRegex);
+  
+  // Also check for domain-only patterns
+  const domainPattern = /([a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}(\/[^\s,|]*)?/gi;
+  const domainMatches = text.match(domainPattern);
+  
+  // Combine and deduplicate
+  const allMatches = [
+    ...(protocolMatches || []),
+    ...(domainMatches || [])
+  ].filter((url, index, self) => {
+    // Remove duplicates and filter out URLs that are already in protocol matches
+    const normalized = normalizeUrl(url);
+    return self.findIndex(u => normalizeUrl(u) === normalized) === index;
+  });
+  
+  return allMatches.length > 0 ? allMatches : null;
 };
 
 /**
- * Validates if a string contains at least one URL
+ * Validates if a string contains at least one URL (including domain-only patterns)
  * @param text - The text to validate
  * @returns true if URLs are found, false otherwise
  */

@@ -42,7 +42,8 @@ export function buildUserFriendlyErrorMessage(error: any, context: string = "pro
 }
 
 /**
- * Gets the API key from environment and validates it
+ * Gets the Gemini API key from environment and validates it
+ * Used for analysis (screenshot analysis)
  * @returns The API key if valid, null otherwise
  */
 export function getAndValidateApiKey(): string | null {
@@ -54,10 +55,52 @@ export function getAndValidateApiKey(): string | null {
 }
 
 /**
+ * Gets the Anthropic API key from environment and validates it
+ * Used for webpage redesign generation
+ * @returns The API key if valid, null otherwise
+ */
+export function getAndValidateAnthropicApiKey(): string | null {
+  const apiKey = import.meta.env.VITE_ANTHROPIC_API_KEY;
+  if (!apiKey || !apiKey.trim()) {
+    return null;
+  }
+  return apiKey;
+}
+
+/**
+ * Gets the OpenAI API key from environment and validates it
+ * Used for webpage redesign generation
+ * @returns The API key if valid, null otherwise
+ */
+export function getAndValidateOpenAIApiKey(): string | null {
+  const apiKey = import.meta.env.VITE_OPENAI_API_KEY;
+  if (!apiKey || !apiKey.trim()) {
+    return null;
+  }
+  return apiKey;
+}
+
+/**
  * Builds a message for missing API key
  * @param action - The action that requires the API key (e.g., "generate your webpage", "analyze your webpage screenshot")
+ * @param isOpenAI - Whether this is for OpenAI (true) or Gemini (false)
+ * @param isAnthropic - Whether this is for Anthropic (true) - takes precedence over isOpenAI
  * @returns User-friendly message about missing API key
  */
-export function buildMissingApiKeyMessage(action: string): string {
-  return `I need a Gemini API key to ${action}. Please set VITE_GEMINI_API_KEY in your environment file and refresh the page.`;
+export function buildMissingApiKeyMessage(action: string, isOpenAI: boolean = false, isAnthropic: boolean = false): string {
+  let apiKeyName: string;
+  let envVarName: string;
+  
+  if (isAnthropic) {
+    apiKeyName = 'Anthropic';
+    envVarName = 'VITE_ANTHROPIC_API_KEY';
+  } else if (isOpenAI) {
+    apiKeyName = 'OpenAI';
+    envVarName = 'VITE_OPENAI_API_KEY';
+  } else {
+    apiKeyName = 'Gemini';
+    envVarName = 'VITE_GEMINI_API_KEY';
+  }
+  
+  return `I need a ${apiKeyName} API key to ${action}. Please set ${envVarName} in your environment file and refresh the page.`;
 }

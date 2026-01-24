@@ -77,34 +77,28 @@ export const NEW_WEBSITE_QUESTIONS: Record<string, QuestionConfig> = {
   },
   brand: {
     phase: 'NewWebsiteBrand',
-    question: "Do you have existing brand guidelines? (logo, colors, fonts, imagery style)",
-    type: 'yesno',
-    options: ['Yes', 'No'],
-    followUpPhase: 'NewWebsiteBrandDetails',
-  },
-  brandDetails: {
-    phase: 'NewWebsiteBrandDetails',
-    question: "Great! You can either upload your brand guideline files or share the details in text. Would you like to upload files or describe them?",
-    type: 'quick',
-    options: ['Upload Files', 'Describe in Text'],
-  },
-  brandDetailsText: {
-    phase: 'NewWebsiteBrandDetails',
-    question: "Please share details about your brand guidelines (colors, fonts, logo, imagery style, etc.)",
+    question: "Do you have any existing design rules regarding colors, fonts, or styling?",
     type: 'text',
-    placeholder: 'e.g., Primary color: #FF5733, Font: Arial, Logo description, Style notes...',
+    placeholder: 'Enter color code (e.g., #FF5733), font name (e.g., Roboto), or styling notes...',
+    options: ["I don't have any"],
   },
-  inspirationLinks: {
-    phase: 'NewWebsiteInspirationLinks',
-    question: "Do you have any reference webpage in mind whose design you like? (If yes, please share the links)",
+  // inspirationLinks: {
+  //   phase: 'NewWebsiteInspirationLinks',
+  //   question: "Do you have any reference webpage in mind whose design you like? If yes, please share the links and briefly explain which design aspects you liked (e.g., layout, typography, color palette, interactions).",
+  //   type: 'text',
+  //   placeholder: 'Paste webpage URLs here (e.g., https://example.com)...',
+  // },
+  // competitors: {
+  //   phase: 'NewWebsiteCompetitors',
+  //   question: "Do you have any competitor webpages in mind whose design you want us to review? If yes, please share the links and note the design aspects you want us to focus on (e.g., navigation, visuals, CTAs).",
+  //   type: 'text',
+  //   placeholder: 'Paste competitor webpage URLs here (e.g., https://example.com)...',
+  // },
+  referencesAndCompetitors: {
+    phase: 'NewWebsiteReferencesAndCompetitors',
+    question: "Could you share links to your top 3 reference or competitor websites, briefly explaining which design elements you would like us to review (e.g., layout, navigation, typography)?",
     type: 'text',
     placeholder: 'Paste webpage URLs here (e.g., https://example.com)...',
-  },
-  competitors: {
-    phase: 'NewWebsiteCompetitors',
-    question: "Do you have any competitor webpages in mind whose design you want us to review? (If yes, please share the links)",
-    type: 'text',
-    placeholder: 'Paste competitor webpage URLs here (e.g., https://example.com)...',
   },
 };
 
@@ -116,10 +110,7 @@ export const NEW_WEBSITE_QUESTION_ORDER = [
   'goals',
   'pageType',
   'brand',
-  'brandDetails',
-  'brandDetailsText',
-  'inspirationLinks',
-  'competitors',
+  'referencesAndCompetitors',
 ];
 
 // Website Redesign - Question Configuration
@@ -135,6 +126,12 @@ export const REDESIGN_WEBSITE_QUESTIONS: Record<string, QuestionConfig> = {
     question: "What is your current webpage URL (if you have one)?",
     type: 'text',
     placeholder: 'Paste your webpage URL here...',
+  },
+  reuseContent: {
+    phase: 'RedesignReuseContent',
+    question: "Would you like to reuse the existing content from your webpage?",
+    type: 'yesno',
+    options: ['Yes', 'No'],
   },
   // redesignType: {
   //   phase: 'RedesignType',
@@ -166,36 +163,42 @@ export const REDESIGN_WEBSITE_QUESTIONS: Record<string, QuestionConfig> = {
       'Done selecting issues',
     ],
   },
-  redesignBrand: {
-    phase: 'RedesignBrand',
-    question: "Do you have existing brand guidelines? (logo, colors, fonts, imagery style)",
-    type: 'yesno',
-    options: ['Yes', 'No'],
-    followUpPhase: 'RedesignBrandDetails',
-  },
-  redesignBrandDetails: {
-    phase: 'RedesignBrandDetails',
-    question: "Great! You can either upload your brand guideline files or share the details in text. Would you like to upload files or describe them?",
-    type: 'quick',
-    options: ['Upload Files', 'Describe in Text'],
-  },
-  redesignBrandDetailsText: {
-    phase: 'RedesignBrandDetails',
-    question: "Please share details about your brand guidelines (colors, fonts, logo, imagery style, etc.)",
-    type: 'text',
-    placeholder: 'e.g., Primary color: #FF5733, Font: Arial, Logo description, Style notes...',
-  },
-  redesignInspirationLinks: {
-    phase: 'RedesignInspirationLinks',
-    question: "Do you have any reference webpage in mind whose design you like? (If yes, please share the links)",
+  // redesignBrand: {
+  //   phase: 'RedesignBrand',
+  //   question: "Do you have existing brand guidelines? (logo, colors, fonts, imagery style)",
+  //   type: 'yesno',
+  //   options: ['Yes', 'No'],
+  //   followUpPhase: 'RedesignBrandDetails',
+  // },
+  // redesignBrandDetails: {
+  //   phase: 'RedesignBrandDetails',
+  //   question: "Great! You can either upload your brand guideline files or share the details in text. Would you like to upload files or describe them?",
+  //   type: 'quick',
+  //   options: ['Upload Files', 'Describe in Text'],
+  // },
+  // redesignBrandDetailsText: {
+  //   phase: 'RedesignBrandDetails',
+  //   question: "Please share details about your brand guidelines (colors, fonts, logo, imagery style, etc.)",
+  //   type: 'text',
+  //   placeholder: 'e.g., Primary color: #FF5733, Font: Arial, Logo description, Style notes...',
+  // },
+  // redesignInspirationLinks: {
+  //   phase: 'RedesignInspirationLinks',
+  //   question: "Do you have any reference webpage in mind whose design you like? If yes, please share the links and briefly explain which design aspects you liked (e.g., layout, typography, color palette, interactions).",
+  //   type: 'text',
+  //   placeholder: 'Paste webpage URLs here (e.g., https://example.com)...',
+  // },
+  // redesignCompetitors: {
+  //   phase: 'RedesignCompetitors',
+  //   question: "Do you have any competitor webpages in mind whose design you want us to review? If yes, please share the links and note the design aspects you want us to focus on (e.g., navigation, visuals, CTAs).",
+  //   type: 'text',
+  //   placeholder: 'Paste competitor webpage URLs here (e.g., https://example.com)...',
+  // },
+  redesignReferencesAndCompetitors: {
+    phase: 'RedesignReferencesAndCompetitors',
+    question: "Could you share links to your top 3 reference or competitor websites, briefly explaining which design elements you would like us to review (e.g., layout, navigation, typography)?",
     type: 'text',
     placeholder: 'Paste webpage URLs here (e.g., https://example.com)...',
-  },
-  redesignCompetitors: {
-    phase: 'RedesignCompetitors',
-    question: "Do you have any competitor webpages in mind whose design you want us to review? (If yes, please share the links)",
-    type: 'text',
-    placeholder: 'Paste competitor webpage URLs here (e.g., https://example.com)...',
   },
 };
 
@@ -203,12 +206,12 @@ export const REDESIGN_WEBSITE_QUESTIONS: Record<string, QuestionConfig> = {
 export const REDESIGN_WEBSITE_QUESTION_ORDER = [
   // 'redesignRole', // Temporarily removed - may be reintroduced later
   'currentUrl',
+  'reuseContent',
   // 'redesignType', // Removed - no longer required
   'redesignAudience',
   'issues',
-  'redesignBrand',
-  'redesignBrandDetails',
-  'redesignBrandDetailsText',
-  'redesignInspirationLinks',
-  'redesignCompetitors',
+  // 'redesignBrand', // Removed - brand guidelines question removed from redesign flow
+  // 'redesignBrandDetails', // Removed - brand guidelines question removed from redesign flow
+  // 'redesignBrandDetailsText', // Removed - brand guidelines question removed from redesign flow
+  'redesignReferencesAndCompetitors',
 ];

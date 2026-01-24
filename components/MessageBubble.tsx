@@ -4,6 +4,10 @@ import UserAvatar from './UserAvatar';
 import BotAvatar from './BotAvatar';
 import HtmlPreview from './HtmlPreview';
 import AuditResults from './AuditResults';
+import RatingPrompt from './RatingPrompt';
+import FeedbackPrompt from './FeedbackPrompt';
+import EmailPrompt from './EmailPrompt';
+import ReferencesAndCompetitorsPrompt from './ReferencesAndCompetitorsPrompt';
 
 interface MessageBubbleProps {
   message: Message;
@@ -13,6 +17,10 @@ interface MessageBubbleProps {
   isLastBotMessage?: boolean;
   selectedOptions?: string[];
   onAuditContinue?: () => void;
+  onRatingSubmit?: (score: number) => void;
+  onFeedbackSubmit?: (feedback: string) => void;
+  onEmailSubmit?: (email: string) => void;
+  onReferencesAndCompetitorsSubmit?: (entries: Array<{ url: string; description: string }>) => void;
 }
 
 const MessageBubble: React.FC<MessageBubbleProps> = ({ 
@@ -22,7 +30,11 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({
   onQuickAction,
   isLastBotMessage = false,
   selectedOptions = [],
-  onAuditContinue
+  onAuditContinue,
+  onRatingSubmit,
+  onFeedbackSubmit,
+  onEmailSubmit,
+  onReferencesAndCompetitorsSubmit
 }) => {
   const isUser = message.sender === MessageSender.USER;
 
@@ -54,6 +66,18 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({
             issues={message.auditIssues} 
             onContinue={onAuditContinue}
           />
+        )}
+        {!isUser && message.isRatingPrompt && onRatingSubmit && (
+          <RatingPrompt onSubmit={onRatingSubmit} />
+        )}
+        {!isUser && message.isFeedbackPrompt && onFeedbackSubmit && (
+          <FeedbackPrompt onSubmit={onFeedbackSubmit} />
+        )}
+        {!isUser && message.isEmailPrompt && onEmailSubmit && (
+          <EmailPrompt onSubmit={onEmailSubmit} />
+        )}
+        {!isUser && message.isReferencesAndCompetitorsPrompt && onReferencesAndCompetitorsSubmit && (
+          <ReferencesAndCompetitorsPrompt onSubmit={onReferencesAndCompetitorsSubmit} />
         )}
         {!isUser && isLastBotMessage && showQuickActions && quickActionOptions.length > 0 && (
           <div className="mt-2.5 sm:mt-3 w-full animate-fadeIn">

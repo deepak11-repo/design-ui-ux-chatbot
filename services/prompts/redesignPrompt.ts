@@ -3,21 +3,40 @@
 import { UserResponses } from '../../types';
 
 /**
- * Builds the redesign prompt for generating a completely new webpage UI
- * using the redesign flow inputs.
+ * Builds the Anthropic-specific redesign prompt for generating a completely new webpage UI
+ * using the redesign flow inputs. This prompt is more detailed and structured than the Gemini version.
  */
 export function buildRedesignPrompt(userResponses: UserResponses): string {
   const {
     redesignAudience,
     redesignInspirationLinks,
     redesignCompetitors,
+    redesignReferencesAndCompetitors,
     redesignBrandDetails,
     redesignIssues,
+    redesignCurrentUrl,
   } = userResponses;
 
   const targetAudience = redesignAudience || 'Not provided';
-  const referenceLinks = redesignInspirationLinks || 'None provided';
-  const competitorLinks = redesignCompetitors || 'None provided';
+  const currentWebsiteUrl = redesignCurrentUrl && redesignCurrentUrl.trim() 
+    ? redesignCurrentUrl.trim() 
+    : 'Not provided';
+  
+  // Use combined field if available, otherwise fallback to separate fields
+  let referenceAndCompetitorLinks = 'None provided';
+  if (redesignReferencesAndCompetitors && redesignReferencesAndCompetitors.trim()) {
+    referenceAndCompetitorLinks = redesignReferencesAndCompetitors.trim();
+  } else {
+    // Fallback to old separate fields
+    const referenceLinks = redesignInspirationLinks || '';
+    const competitorLinks = redesignCompetitors || '';
+    const parts = [];
+    if (referenceLinks.trim()) parts.push(`References: ${referenceLinks.trim()}`);
+    if (competitorLinks.trim()) parts.push(`Competitors: ${competitorLinks.trim()}`);
+    if (parts.length > 0) {
+      referenceAndCompetitorLinks = parts.join('\n');
+    }
+  }
   const brandLogoUrl = 'Not provided';
   const brandColorTheme =
     redesignBrandDetails && redesignBrandDetails.trim()
@@ -38,16 +57,16 @@ export function buildRedesignPrompt(userResponses: UserResponses): string {
 Goal: Produce a modern, fresh, conversion-ready design that fixes the listed UI/UX issues, aligns with the target audience and region, and incorporates contemporary UI polish and effects appropriate for 2026.
 
 INPUT SECTION (PROVIDED BY APPLICATION)
+Current Website URL: ${currentWebsiteUrl}
 Target Audience: ${targetAudience}
-Reference Links (Optional): ${referenceLinks}
-Competitor Links (Optional): ${competitorLinks}
+Reference/Competitor Links (Optional): ${referenceAndCompetitorLinks}
 Brand Logo (Optional): ${brandLogoUrl}
 Brand Color Theme (Optional): ${brandColorTheme}
 Image Assets (Optional): ${imageAssetUrls}
 Current UI/UX Issues: ${currentIssues}
 
 WEBSITE AND MARKET INTERPRETATION
-1. If Reference Links includes the company website, analyze it to infer:
+1. If Reference/Competitor Links includes the company website, analyze it to infer:
    - Business type and offering style (product, service, SaaS, portfolio, local business, enterprise)
    - Region and market expectations based on cues such as language, currency, location, and positioning
    - Current visual maturity level (basic, mid, premium)

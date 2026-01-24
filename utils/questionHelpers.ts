@@ -17,14 +17,17 @@ export const getPhaseFromString = (phaseString: string): WorkflowPhase => {
     'NewWebsiteBrandDetails': WorkflowPhase.NEW_WEBSITE_BRAND_DETAILS,
     'NewWebsiteInspirationLinks': WorkflowPhase.NEW_WEBSITE_INSPIRATION_LINKS,
     'NewWebsiteCompetitors': WorkflowPhase.NEW_WEBSITE_COMPETITORS,
+    'NewWebsiteReferencesAndCompetitors': WorkflowPhase.NEW_WEBSITE_REFERENCES_AND_COMPETITORS,
     // Website Redesign
     'RedesignCurrentUrl': WorkflowPhase.REDESIGN_CURRENT_URL,
+    'RedesignReuseContent': WorkflowPhase.REDESIGN_REUSE_CONTENT,
     'RedesignAudience': WorkflowPhase.REDESIGN_AUDIENCE,
     'RedesignIssues': WorkflowPhase.REDESIGN_ISSUES,
     'RedesignBrand': WorkflowPhase.REDESIGN_BRAND,
     'RedesignBrandDetails': WorkflowPhase.REDESIGN_BRAND_DETAILS,
     'RedesignInspirationLinks': WorkflowPhase.REDESIGN_INSPIRATION_LINKS,
     'RedesignCompetitors': WorkflowPhase.REDESIGN_COMPETITORS,
+    'RedesignReferencesAndCompetitors': WorkflowPhase.REDESIGN_REFERENCES_AND_COMPETITORS,
   };
   return phaseMap[phaseString] || WorkflowPhase.INITIAL;
 };
@@ -42,6 +45,7 @@ export const isNewWebsitePhase = (phase: WorkflowPhase): boolean => {
     WorkflowPhase.NEW_WEBSITE_BRAND_DETAILS,
     WorkflowPhase.NEW_WEBSITE_INSPIRATION_LINKS,
     WorkflowPhase.NEW_WEBSITE_COMPETITORS,
+    WorkflowPhase.NEW_WEBSITE_REFERENCES_AND_COMPETITORS,
   ].includes(phase);
 };
 
@@ -51,12 +55,14 @@ export const isNewWebsitePhase = (phase: WorkflowPhase): boolean => {
 export const isRedesignPhase = (phase: WorkflowPhase): boolean => {
   return [
     WorkflowPhase.REDESIGN_CURRENT_URL,
+    WorkflowPhase.REDESIGN_REUSE_CONTENT,
     WorkflowPhase.REDESIGN_AUDIENCE,
     WorkflowPhase.REDESIGN_ISSUES,
     WorkflowPhase.REDESIGN_BRAND,
     WorkflowPhase.REDESIGN_BRAND_DETAILS,
     WorkflowPhase.REDESIGN_INSPIRATION_LINKS,
     WorkflowPhase.REDESIGN_COMPETITORS,
+    WorkflowPhase.REDESIGN_REFERENCES_AND_COMPETITORS,
   ].includes(phase);
 };
 
@@ -73,19 +79,7 @@ export const getNextQuestionIndex = (
   while (nextIndex < questionOrder.length) {
     const nextQuestionKey = questionOrder[nextIndex];
     
-    // Skip brandDetails if user doesn't have brand guidelines
-    if (nextQuestionKey === 'brandDetails' && !responses.hasBrand) {
-      nextIndex += 1;
-      continue;
-    }
-    
-    // Skip brandDetailsText if user chose to upload files OR doesn't have brand guidelines
-    if (nextQuestionKey === 'brandDetailsText' && 
-        (responses.brandDetailsMethod === 'upload' || !responses.hasBrand)) {
-      nextIndex += 1;
-      continue;
-    }
-    
+    // Note: brand question is now a simple text input with "I don't have any" option (no skip logic needed)
     // Note: inspirationLinks question is now combined and always shown (user can select "I don't have any")
     // Note: competitors question is now combined and always shown (user can select "I don't have any")
     
@@ -106,24 +100,7 @@ export const getNextRedesignQuestionIndex = (
 ): number => {
   let nextIndex = currentIndex + 1;
   
-  while (nextIndex < questionOrder.length) {
-    const nextQuestionKey = questionOrder[nextIndex];
-    
-    // Skip redesignBrandDetails if user doesn't have brand guidelines
-    if (nextQuestionKey === 'redesignBrandDetails' && !responses.redesignHasBrand) {
-      nextIndex += 1;
-      continue;
-    }
-    
-    // Skip redesignBrandDetailsText if user chose to upload files OR doesn't have brand guidelines
-    if (nextQuestionKey === 'redesignBrandDetailsText' &&
-        (responses.redesignBrandDetailsMethod === 'upload' || !responses.redesignHasBrand)) {
-      nextIndex += 1;
-      continue;
-    }
-    
-    break;
-  }
+  // Brand questions removed from redesign flow - no skip logic needed
   
   if (nextIndex >= questionOrder.length) {
     return questionOrder.length;

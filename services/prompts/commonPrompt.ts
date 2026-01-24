@@ -12,12 +12,12 @@ export function buildCommonPrompt(userResponses: UserResponses): string {
     audience,
     goals,
     pageType,
-    hasBrand,
     brandDetails,
     inspirationLinks,
     hasInspiration,
     competitors,
     hasCompetitors,
+    referencesAndCompetitors,
   } = userResponses;
 
   // Extract page type (remove "Other: " prefix if present)
@@ -25,24 +25,33 @@ export function buildCommonPrompt(userResponses: UserResponses): string {
 
   // Build brand guidelines section
   let brandGuidelines = 'None provided';
-  if (hasBrand) {
-    if (brandDetails && brandDetails.trim()) {
-      brandGuidelines = brandDetails.trim();
-    } else {
-      brandGuidelines = 'User has brand guidelines but details were not provided';
+  if (brandDetails && brandDetails.trim()) {
+    brandGuidelines = brandDetails.trim();
+  }
+
+  // Build references and competitors section (combined)
+  let referencesAndCompetitorsSection = 'None provided';
+  if (referencesAndCompetitors && referencesAndCompetitors.trim()) {
+    referencesAndCompetitorsSection = referencesAndCompetitors.trim();
+  } else {
+    // Fallback to old separate fields if new combined field is not available
+    let inspirationSection = 'None provided';
+    if (hasInspiration && inspirationLinks && inspirationLinks.trim()) {
+      inspirationSection = inspirationLinks.trim();
     }
-  }
 
-  // Build inspiration links section
-  let inspirationSection = 'None provided';
-  if (hasInspiration && inspirationLinks && inspirationLinks.trim()) {
-    inspirationSection = inspirationLinks.trim();
-  }
+    let competitorsSection = 'None provided';
+    if (hasCompetitors && competitors && competitors.trim()) {
+      competitorsSection = competitors.trim();
+    }
 
-  // Build competitor links section
-  let competitorsSection = 'None provided';
-  if (hasCompetitors && competitors && competitors.trim()) {
-    competitorsSection = competitors.trim();
+    // Combine old fields if new field is not available
+    if (inspirationSection !== 'None provided' || competitorsSection !== 'None provided') {
+      const parts = [];
+      if (inspirationSection !== 'None provided') parts.push(`References: ${inspirationSection}`);
+      if (competitorsSection !== 'None provided') parts.push(`Competitors: ${competitorsSection}`);
+      referencesAndCompetitorsSection = parts.join('\n');
+    }
   }
 
   const commonPrompt = `You are an expert senior UI/UX designer with years of experience in designing high-quality, user-centered, and conversion-optimized webpages. Your task is to assist the user in structuring their webpage design based on the information they've provided.
@@ -66,8 +75,7 @@ export function buildCommonPrompt(userResponses: UserResponses): string {
 - **Target Audience**: ${audience || 'Not provided'}
 - **Goals**: ${goals || 'Not provided'}
 - **Brand Guidelines**: ${brandGuidelines}
-- **Inspiration Links**: ${inspirationSection}
-- **Competitor Links**: ${competitorsSection}
+- **Reference/Competitor Links**: ${referencesAndCompetitorsSection}
 
 ### Output Requirements:
 - Generate a complete, standalone HTML file

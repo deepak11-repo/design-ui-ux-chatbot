@@ -26,6 +26,14 @@ async function callGeminiApi(prompt: string, apiKey: string): Promise<string> {
     // Extract text from response
     const text = response.text;
     validateGeminiResponse(text);
+    const usage = (response as any)?.usageMetadata;
+    if (usage) {
+      const inputTokens = usage.promptTokenCount ?? 'unknown';
+      const outputTokens = usage.candidatesTokenCount ?? 'unknown';
+      console.log(`[Gemini] tokens -> input: ${inputTokens}, output: ${outputTokens}`);
+    } else {
+      console.log(`[Gemini] tokens -> input: unknown, output: unknown`);
+    }
     return text!;
   } catch (error: any) {
     throw handleGeminiError(error);
@@ -65,6 +73,14 @@ async function callGeminiApiWithImage(
     // Extract text from response
     const text = response.text;
     validateGeminiResponse(text);
+    const usage = (response as any)?.usageMetadata;
+    if (usage) {
+      const inputTokens = usage.promptTokenCount ?? 'unknown';
+      const outputTokens = usage.candidatesTokenCount ?? 'unknown';
+      console.log(`[Gemini-image] tokens -> input: ${inputTokens}, output: ${outputTokens}`);
+    } else {
+      console.log(`[Gemini-image] tokens -> input: unknown, output: unknown`);
+    }
     return text!;
   } catch (error: any) {
     throw handleGeminiError(error);
@@ -77,6 +93,9 @@ async function callGeminiApiWithImage(
  * @param apiKey - The Gemini API key
  * @returns The generated HTML content
  * @throws GeminiApiError if all retries fail
+ * 
+ * NOTE: This function is still used for the scratch route.
+ * For the redesign route, Anthropic is used instead (see anthropicService.ts).
  */
 export async function generateHtmlWithGemini(
   prompt: string,
