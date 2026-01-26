@@ -39,8 +39,3 @@ export const OTHER_INPUT_MESSAGES = {
   },
 } as const;
 
-/**
- * Completion message
- */
-export const COMPLETION_MESSAGE = "Perfect! I've gathered all the information I need. Thank you for sharing these details with me. Our team will review your requirements and get back to you soon!";
-

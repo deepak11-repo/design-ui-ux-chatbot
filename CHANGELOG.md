@@ -7,7 +7,52 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **Logging**: Removed all non-error logging (debug, warn, log) from production code - only error logging remains
+- **Token usage logging**: Changed from always-logging to dev-only (logger.debug, suppressed in production)
+- **Vite config**: Removed `base: '/react-app/'` from vite.config.ts to support flexible deployment paths
+
+### Removed
+- **Deprecated code**: Removed `buildUserFriendlyErrorMessage()` function (deprecated, use STANDARD_ERROR_MESSAGE)
+- **Deprecated code**: Removed `extractWebpageText()` function (deprecated, use `captureWebpageScreenshotWithText()`)
+- **Debug utilities**: Removed `debugLogger.ts` utility file (all debug logging removed)
+
+### Fixed
+- **Error handling**: Ensured all async errors use `handleError()` for consistent error handling
+- **Comments**: Cleaned up and rewrote all code comments, removed unwanted/deprecated comments
+
+### Refactored
+- **Anthropic API calls**: Extracted common API calling logic from `opusService.ts` and `sonnetService.ts` into shared `apiCaller.ts` helper, eliminating ~100 lines of duplicate code
+- **HTML generation fallback**: Consolidated duplicate fallback patterns in `htmlGenerationWithFallback.ts` using shared `fallbackHelper.ts`, reducing code duplication by ~50%
+- **HTML response handling**: Created `htmlResponseHandler.ts` utility to consolidate duplicate HTML extraction and message creation logic
+- **Debug logging**: Centralized console.log patterns into `debugLogger.ts` utility with functions for reference analysis, API prompts, and specification logging
+- **Code organization**: Improved modularity by extracting shared patterns into reusable utilities
+
+### Security
+- **Critical**: Moved hardcoded APIFlash access key to environment variable (`VITE_APIFLASH_ACCESS_KEY`) to prevent exposure in source code
+- Added comprehensive input sanitization utility (`utils/inputSanitizer.ts`) with:
+  - Text sanitization (removes null bytes and control characters)
+  - Email validation with RFC 5322 compliant regex
+  - URL validation with SSRF protection (blocks localhost, private IPs, .local domains)
+  - Input length limits for all user inputs
+- Enhanced email validation in `EmailPrompt` component with proper regex and length limits
+- Added URL security validation in `apiflashService.ts` to prevent SSRF attacks
+- Sanitized all user data before storing in localStorage (`utils/storageSanitizer.ts`)
+- Sanitized all data before sending to Google Chat webhook
+- Updated `referenceParser.ts` to sanitize URLs and descriptions
+- Added security comments to `HtmlPreview` iframe sandbox attributes
+
+### Removed
+- Removed unused prompt files: `commonPrompt.ts`, `pageTypePrompts.ts`, `redesignPrompt.ts` (functions were imported but never called)
+- Removed unused component: `ApiKeyInfo.tsx` (component was never imported or used)
+- Removed deprecated file: `anthropicService.ts` (deprecated re-export file, code now uses `anthropic/index.ts` directly)
+- Removed unused exports: `generateHtmlWithGemini` and `generateHtmlWithOpus` (legacy functions not used in current flow)
+- Removed deprecated functions: `callAnthropicApiWithOpus` and `saveToTextFile` (no longer needed)
+- Removed unused constant: `COMPLETION_MESSAGE` from `constants/messages.ts` (imported but never used)
+
 ### Added
+- Session management with usage limit: Users are limited to 2 sessions total. After submitting email, session ends and "Start a New Chat" button appears. Clicking the button clears localStorage, increments session count, and starts a fresh session. After 2 sessions, users see a limit message and cannot start new sessions. Session count is tracked in localStorage separately from chat state.
+- Google Chat webhook integration: Session records are automatically sent to Google Chat space when user submits email. Includes session metadata, user information, business context, design preferences, reference websites, audit results (for redesign), and user feedback. Webhook URL configured via `VITE_GOOGLE_CHAT_WEBHOOK_URL` environment variable. Duplicate prevention ensures webhook is sent only once per session. HTML output is excluded from webhook payload as per requirements.
 - Added "reuse existing content" question to redesign flow: after collecting current URL, prompts user with Yes/No options to indicate if they want to reuse existing webpage content.
 - Added centralized logger utility (`utils/logger.ts`) for consistent logging with dev-only debug logs.
 - Added question navigation helper utilities (`utils/questionNavigation.ts`) to reduce code duplication.

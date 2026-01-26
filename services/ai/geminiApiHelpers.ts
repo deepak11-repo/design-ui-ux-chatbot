@@ -2,7 +2,7 @@
 
 import { GoogleGenAI } from "@google/genai";
 
-const MODEL_NAME = "gemini-2.5-flash";
+const MODEL_NAME = "gemini-3-flash-preview";
 
 /**
  * Creates a GoogleGenAI instance with the provided API key

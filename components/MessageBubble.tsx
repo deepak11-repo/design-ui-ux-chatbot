@@ -65,6 +65,7 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({
           <AuditResults 
             issues={message.auditIssues} 
             onContinue={onAuditContinue}
+            hideContinueButton={true}
           />
         )}
         {!isUser && message.isRatingPrompt && onRatingSubmit && (

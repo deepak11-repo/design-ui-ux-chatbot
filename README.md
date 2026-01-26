@@ -63,13 +63,11 @@ npm run preview
 
 ```
 ├── components/          # React components
-│   ├── ApiKeyInfo.tsx  # API key configuration info
 │   ├── BotAvatar.tsx   # Bot avatar component
 │   ├── ChatWindow.tsx  # Main chat window
 │   ├── ErrorBoundary.tsx # Error handling
 │   ├── InputBar.tsx    # Message input component
 │   ├── MessageBubble.tsx # Individual message display
-│   ├── FileUpload.tsx # File upload component
 │   ├── TypingIndicator.tsx # Loading indicator
 │   └── UserAvatar.tsx  # User avatar component
 ├── hooks/              # Custom React hooks

@@ -72,6 +72,7 @@ const ReferencesAndCompetitorsPrompt: React.FC<ReferencesAndCompetitorsPromptPro
     setCurrentUrl('');
     setCurrentDescription('');
     setError('');
+    setIsSubmitted(true);
     // Submit empty array to indicate "I don't have any"
     onSubmit([]);
   };
@@ -192,9 +193,9 @@ const ReferencesAndCompetitorsPrompt: React.FC<ReferencesAndCompetitorsPromptPro
         </div>
       )}
 
-      {/* Submit button - hidden after submission */}
-      {!isSubmitted && (entries.length > 0 || hasNone) && (
-        <div className={`flex justify-end ${entries.length > 0 ? 'pt-2 border-t border-gray-200 mt-3' : hasNone ? 'mt-2' : 'mt-3'}`}>
+      {/* Submit button - only show when entries are available (auto-submits when "I don't have any" is selected) */}
+      {!isSubmitted && entries.length > 0 && (
+        <div className={`flex justify-end pt-2 border-t border-gray-200 mt-3`}>
           <button
             type="button"
             onClick={handleSubmit}

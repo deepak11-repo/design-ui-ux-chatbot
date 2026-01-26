@@ -5,9 +5,10 @@ import React from 'react';
 interface AuditResultsProps {
   issues: string[];
   onContinue?: () => void;
+  hideContinueButton?: boolean;
 }
 
-const AuditResults: React.FC<AuditResultsProps> = ({ issues, onContinue }) => {
+const AuditResults: React.FC<AuditResultsProps> = ({ issues, onContinue, hideContinueButton = false }) => {
   if (!issues || issues.length === 0) {
     return null;
   }
@@ -64,19 +65,21 @@ const AuditResults: React.FC<AuditResultsProps> = ({ issues, onContinue }) => {
         </div>
       </div>
       
-      {/* Continue Button */}
-      <div className="mt-3 flex justify-start">
-        <button
-          onClick={() => {
-            if (onContinue) {
-              onContinue();
-            }
-          }}
-          className="text-xs sm:text-sm px-4 sm:px-5 py-2 sm:py-2.5 rounded-lg bg-[#2563EB] text-white border border-[#1D4ED8] hover:bg-[#1D4ED8] hover:border-[#1E40AF] hover:shadow-md hover:-translate-y-0.5 active:translate-y-0 active:shadow-sm active:bg-[#1E40AF] focus:outline-none focus:ring-2 focus:ring-offset-1 focus:ring-[#2563eb]/60 cursor-pointer whitespace-nowrap font-medium transition-all duration-200"
-        >
-          Move Forward
-        </button>
-      </div>
+      {/* Continue Button - hidden for redesign flow (automatic progression) */}
+      {!hideContinueButton && onContinue && (
+        <div className="mt-3 flex justify-start">
+          <button
+            onClick={() => {
+              if (onContinue) {
+                onContinue();
+              }
+            }}
+            className="text-xs sm:text-sm px-4 sm:px-5 py-2 sm:py-2.5 rounded-lg bg-[#2563EB] text-white border border-[#1D4ED8] hover:bg-[#1D4ED8] hover:border-[#1E40AF] hover:shadow-md hover:-translate-y-0.5 active:translate-y-0 active:shadow-sm active:bg-[#1E40AF] focus:outline-none focus:ring-2 focus:ring-offset-1 focus:ring-[#2563eb]/60 cursor-pointer whitespace-nowrap font-medium transition-all duration-200"
+          >
+            Move Forward
+          </button>
+        </div>
+      )}
     </div>
   );
 };

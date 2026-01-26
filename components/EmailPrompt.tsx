@@ -1,5 +1,6 @@
 // File: ./components/EmailPrompt.tsx
 import React, { useState } from 'react';
+import { validateAndSanitizeEmail, INPUT_LIMITS } from '../utils/inputSanitizer';
 
 interface EmailPromptProps {
   onSubmit: (email: string) => void;
@@ -10,16 +11,23 @@ const EmailPrompt: React.FC<EmailPromptProps> = ({ onSubmit, label = 'Please sha
   const [email, setEmail] = useState('');
   const [error, setError] = useState('');
 
-  const isValidEmail = (value: string) => /\S+@\S+\.\S+/.test(value);
-
   const handleSubmit = () => {
-    if (!email.trim() || !isValidEmail(email.trim())) {
+    const sanitizedEmail = validateAndSanitizeEmail(email);
+    if (!sanitizedEmail) {
       setError('Please enter a valid email address.');
       return;
     }
     setError('');
-    onSubmit(email.trim());
+    onSubmit(sanitizedEmail);
     setEmail('');
+  };
+
+  const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const value = e.target.value;
+    // Limit input length
+    if (value.length <= INPUT_LIMITS.EMAIL) {
+      setEmail(value);
+    }
   };
 
   return (
@@ -30,7 +38,8 @@ const EmailPrompt: React.FC<EmailPromptProps> = ({ onSubmit, label = 'Please sha
         className="w-full text-sm p-3 border rounded-lg focus:outline-none focus:ring-2 focus:ring-[#2563EB]/30 focus:border-[#2563EB] transition-all"
         placeholder="you@example.com"
         value={email}
-        onChange={(e) => setEmail(e.target.value)}
+        onChange={handleChange}
+        maxLength={INPUT_LIMITS.EMAIL}
       />
       {error && <p className="text-xs text-red-600">{error}</p>}
       <div className="flex justify-end">

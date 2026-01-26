@@ -4,7 +4,6 @@ import ChatWindow from './components/ChatWindow';
 import InputBar from './components/InputBar';
 import useChat from './hooks/useChat';
 import { WorkflowPhase } from './types';
-import FileUpload from './components/FileUpload';
 
 const App: React.FC = () => {
   const {
@@ -17,8 +16,6 @@ const App: React.FC = () => {
     shouldShowQuickActions,
     getCurrentQuestionPlaceholder,
     shouldShowInputBar,
-    showFileUpload,
-    handleFileUpload,
     getSelectedOptions,
     isGeneratingHtml,
     generationProgressText,
@@ -29,9 +26,9 @@ const App: React.FC = () => {
     handleFeedbackSubmit,
     handleEmailSubmit,
     handleReferencesAndCompetitorsSubmit,
-    handleDesignProviderChange,
-    designProvider,
     sessionClosed,
+    sessionLimitReached,
+    startNewChat,
   } = useChat();
 
   const questionOptions = getCurrentQuestionOptions();
@@ -59,21 +56,6 @@ const App: React.FC = () => {
             </div>
           </div>
           <div className="flex items-center space-x-3">
-          <div className="flex items-center space-x-2">
-              <label htmlFor="design-provider" className="text-xs sm:text-sm text-[#222222] font-medium whitespace-nowrap">
-                Design model
-              </label>
-              <select
-                id="design-provider"
-                value={designProvider}
-                onChange={(e) => handleDesignProviderChange(e.target.value as 'anthropic' | 'openai' | 'gemini')}
-                className="text-xs sm:text-sm border border-[#E5E5E5] rounded-lg px-2 py-1 bg-white focus:outline-none focus:ring-2 focus:ring-[#2563EB]/40 focus:border-[#2563EB]"
-              >
-                <option value="anthropic">Anthropic</option>
-                <option value="openai">OpenAI</option>
-                <option value="gemini">Gemini</option>
-              </select>
-            </div>
             <span className="relative flex h-3 w-3">
               <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-[#2ca03d] opacity-75"></span>
               <span className="relative inline-flex rounded-full h-3 w-3 bg-[#2ca03d]"></span>
@@ -109,18 +91,36 @@ const App: React.FC = () => {
           onReferencesAndCompetitorsSubmit={handleReferencesAndCompetitorsSubmit}
         />
 
-        {showFileUpload && (currentPhase === WorkflowPhase.NEW_WEBSITE_BRAND_DETAILS || currentPhase === WorkflowPhase.REDESIGN_BRAND_DETAILS) && (
-          <div className="p-3 sm:p-4 border-t border-[#E5E5E5] shrink-0 bg-white">
-            <FileUpload onFilesSelected={handleFileUpload} />
-          </div>
-        )}
-
-        {currentPhase !== WorkflowPhase.NEW_WEBSITE_COMPLETE && currentPhase !== WorkflowPhase.REDESIGN_COMPLETE && !showFileUpload && !isCapturingScreenshot && showInput && !sessionClosed && (
+        {/* Show InputBar when session is active */}
+        {currentPhase !== WorkflowPhase.NEW_WEBSITE_COMPLETE && currentPhase !== WorkflowPhase.REDESIGN_COMPLETE && !isCapturingScreenshot && showInput && !sessionClosed && (
           <InputBar 
             onSendMessage={sendMessage} 
             isLoading={isLoading} 
             placeholder={placeholder}
           />
+        )}
+
+        {/* Show "Start a New Chat" button when session is closed and limit not reached */}
+        {sessionClosed && !sessionLimitReached && (
+          <div className="p-3 sm:p-4 border-t border-[#E5E5E5] shrink-0 bg-white">
+            <button
+              onClick={startNewChat}
+              className="w-full text-sm sm:text-base px-4 sm:px-6 py-2.5 sm:py-3 rounded-lg bg-[#2563EB] text-white border border-[#1D4ED8] hover:bg-[#1D4ED8] hover:border-[#1E40AF] hover:shadow-md focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-[#2563eb]/60 transition-all duration-200 font-medium"
+            >
+              Start a New Chat
+            </button>
+          </div>
+        )}
+
+        {/* Show session limit message when limit is reached */}
+        {sessionLimitReached && (
+          <div className="p-3 sm:p-4 border-t border-[#E5E5E5] shrink-0 bg-white">
+            <div className="w-full px-4 sm:px-6 py-3 rounded-lg bg-gray-50 border border-gray-200">
+              <p className="text-sm sm:text-base text-gray-700 text-center">
+                You've reached the maximum number of sessions (2). Thank you for using our chatbot!
+              </p>
+            </div>
+          </div>
         )}
       </div>
        <footer className="text-center mt-4 text-xs text-gray-600 px-4 sm:px-0">

@@ -79,10 +79,6 @@ export const getNextQuestionIndex = (
   while (nextIndex < questionOrder.length) {
     const nextQuestionKey = questionOrder[nextIndex];
     
-    // Note: brand question is now a simple text input with "I don't have any" option (no skip logic needed)
-    // Note: inspirationLinks question is now combined and always shown (user can select "I don't have any")
-    // Note: competitors question is now combined and always shown (user can select "I don't have any")
-    
     break;
   }
   

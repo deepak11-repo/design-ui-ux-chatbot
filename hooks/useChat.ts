@@ -21,8 +21,11 @@ import {
 } from '../utils/questionHelpers';
 import { getNextQuestionInfo, isReferencesAndCompetitorsPhase } from '../utils/questionNavigation';
 import { hasUrls, normalizeUrl } from '../utils/validation';
-import { loadChatState, saveChatState } from '../utils/storage';
-import { VALIDATION_MESSAGES, OTHER_INPUT_MESSAGES, COMPLETION_MESSAGE } from '../constants/messages';
+import { loadChatState, saveChatState, clearChatState, getSessionCount, incrementSessionCount, isSessionLimitReached } from '../utils/storage';
+import { getOrCreateSessionId, getSessionStartTimestamp, setSessionStartTimestamp, clearSessionData } from '../utils/sessionId';
+import { formatSessionDataForGoogleChat, formatSessionDataAsGoogleChatCard } from '../utils/googleChatFormatter';
+import { sendSessionRecordToGoogleChat } from '../utils/webhookSender';
+import { VALIDATION_MESSAGES, OTHER_INPUT_MESSAGES } from '../constants/messages';
 import { 
   isIDontHaveAny, 
   validateNonEmpty, 
@@ -31,20 +34,23 @@ import {
   toggleMultiSelectOption,
   normalizeMultiSelectForDisplay
 } from '../utils/responseHelpers';
-import { buildCommonPrompt } from '../services/prompts/commonPrompt';
-import { getPageTypePrompt, buildFullPrompt } from '../services/prompts/pageTypePrompts';
-import { buildRedesignPrompt } from '../services/prompts/redesignPrompt';
-import { analyzeScreenshotWithGemini, generateHtmlWithGemini } from '../services/ai/geminiService';
-import { generateHtmlWithAnthropic } from '../services/ai/anthropicService';
-import { generateHtmlWithOpenAI } from '../services/ai/openaiService';
-import { extractHtmlFromResponse } from '../services/ai/htmlProcessor';
-import { captureWebpageScreenshot } from '../services/api/apiflashService';
-import { arrayBufferToBinaryString, arrayBufferToBase64 } from '../utils/binaryUtils';
+import { validateAndTrim } from '../utils/responseValidation';
+import { extractJsonFromResponse } from '../utils/jsonValidator';
+import { analyzeScreenshotWithGemini, generateRedesignSpecificationWithGemini } from '../services/ai/geminiService';
+import { generateSpecificationWithSonnet, generateHtmlFromSpecificationWithFallback, generateRedesignSpecificationWithSonnet, generateHtmlFromRedesignSpecificationWithFallback } from '../services/ai/anthropic';
+import { REDESIGN_SPECIFICATION_SYSTEM_PROMPT, buildRedesignSpecificationUserPrompt, buildRedesignSpecificationPromptForGemini } from '../services/prompts/anthropic/redesignSpecificationPrompt';
+import { NEW_WEBSITE_SYSTEM_PROMPT, buildNewWebsiteUserPrompt } from '../services/prompts/newWebsiteSpecPrompt';
+import { processHtmlResponse } from '../utils/htmlResponseHandler';
+import { captureWebpageScreenshotWithText } from '../services/api/apiflashService';
+import { arrayBufferToBase64 } from '../utils/binaryUtils';
 import { UI_UX_AUDIT_PROMPT } from '../services/prompts/uiUxAuditPrompt';
 import { parseAuditResponse } from '../utils/auditParser';
-import { buildUserFriendlyErrorMessage, getAndValidateApiKey, getAndValidateAnthropicApiKey, getAndValidateOpenAIApiKey, buildMissingApiKeyMessage } from '../utils/errorMessages';
+import { getAndValidateApiKey, getAndValidateAnthropicApiKey, buildMissingApiKeyMessage, STANDARD_ERROR_MESSAGE } from '../utils/errorMessages';
 import { logger } from '../utils/logger';
-// Note: getAndValidateApiKey is used for Gemini (analysis), getAndValidateAnthropicApiKey/getAndValidateOpenAIApiKey are used for design generation depending on selection
+import { parseReferencesString } from '../utils/referenceParser';
+import { processReferenceWebsites } from '../services/api/referenceWebsiteService';
+import { addModelCallDelay } from '../utils/modelCallDelay';
+import { getLoaderMessage, LoaderType } from '../utils/loaderMessages';
 
 const useChat = () => {
   const [messages, setMessages] = useState<Message[]>([WELCOME_MESSAGE_1, WELCOME_MESSAGE_2]);
@@ -52,29 +58,32 @@ const useChat = () => {
   const [currentPhase, setCurrentPhase] = useState<WorkflowPhase>(WorkflowPhase.INITIAL);
   const [userResponses, setUserResponses] = useState<UserResponses>({});
   const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0);
-  const [showFileUpload, setShowFileUpload] = useState(false);
   const [currentFlow, setCurrentFlow] = useState<'newWebsite' | 'redesign' | null>(null);
   const [isGeneratingHtml, setIsGeneratingHtml] = useState(false);
-  const [generationProgressText, setGenerationProgressText] = useState('Generating your webpage...');
+  const [generationProgressText, setGenerationProgressText] = useState(() => getLoaderMessage('generating_html_new'));
   const [isCapturingScreenshot, setIsCapturingScreenshot] = useState(false);
-  const [screenshotProgressText, setScreenshotProgressText] = useState('Analyzing your page');
+  const [screenshotProgressText, setScreenshotProgressText] = useState(() => getLoaderMessage('reviewing_page'));
   const [sessionClosed, setSessionClosed] = useState(false);
   const [ratingRequested, setRatingRequested] = useState(false);
   const [ratingCompleted, setRatingCompleted] = useState(false);
   const [ratingScore, setRatingScore] = useState<number | null>(null);
-  const [designProvider, setDesignProvider] = useState<'anthropic' | 'openai' | 'gemini'>('anthropic');
+  // Store screenshot base64 in memory only (not in userResponses to avoid localStorage quota issues)
+  const [redesignScreenshotBase64, setRedesignScreenshotBase64] = useState<string | null>(null);
+  // Session limit tracking (derived from localStorage)
+  const [sessionLimitReached, setSessionLimitReached] = useState<boolean>(() => isSessionLimitReached());
   
   // Helper function to reset generation state
   const resetGenerationState = () => {
     setIsGeneratingHtml(false);
     setIsLoading(false);
-    setGenerationProgressText('Generating your webpage...');
+    setGenerationProgressText(getLoaderMessage('generating_html_new'));
   };
   
   // Helper function to reset screenshot state
   const resetScreenshotState = () => {
     setIsCapturingScreenshot(false);
-    setScreenshotProgressText('Analyzing your page');
+    setScreenshotProgressText(getLoaderMessage('reviewing_page'));
+    // redesignScreenshotBase64 is cleared after specification generation completes
   };
 
   const enqueueRatingPrompt = () => {
@@ -84,6 +93,38 @@ const useChat = () => {
       'Please rate this design from 1 to 5 (1 = needs work, 5 = love it).',
       MessageSender.BOT,
       { isRatingPrompt: true }
+    );
+  };
+
+  /**
+   * Centralized error handler for all errors in the chatbot
+   * Shows a user-friendly error message and displays email prompt
+   * Session will close after user submits their email
+   * @param error - The error object (for logging purposes)
+   * @param context - Optional context for logging (e.g., "generating your webpage")
+   */
+  const handleError = (error: any, context?: string) => {
+    // Log the error for debugging (but don't show technical details to user)
+    if (context) {
+      logger.error(`Error ${context}:`, error);
+    } else {
+      logger.error('Error encountered:', error);
+    }
+
+    // Reset any loading/generation states
+    resetGenerationState();
+    resetScreenshotState();
+    setIsLoading(false);
+
+    // Show user-friendly error message
+    addMessage(STANDARD_ERROR_MESSAGE, MessageSender.BOT);
+
+    // Show email prompt so user can get assistance
+    // Session will close after email is submitted (handled in handleEmailSubmit)
+    addMessage(
+      'Please provide your email so that our agent can personally assist you.',
+      MessageSender.BOT,
+      { isEmailPrompt: true }
     );
   };
 
@@ -120,7 +161,7 @@ const useChat = () => {
     );
   };
 
-  const handleEmailSubmit = (email: string) => {
+  const handleEmailSubmit = async (email: string) => {
     if (sessionClosed) return;
     addMessage(email, MessageSender.USER);
     addMessage(
@@ -128,6 +169,70 @@ const useChat = () => {
       MessageSender.BOT
     );
     setSessionClosed(true);
+    
+    // Check if session limit will be reached after this session
+    const currentCount = getSessionCount();
+    if (currentCount >= 1) {
+      // After this session closes, user will have used 2 sessions
+      setSessionLimitReached(true);
+    }
+
+    // Send session record to Google Chat webhook
+    try {
+      const sessionStartTimestamp = getSessionStartTimestamp() || new Date().toISOString();
+      
+      // Get audit issues from messages (for redesign route)
+      let auditIssues: string[] = [];
+      if (currentFlow === 'redesign') {
+        const auditMessage = messages.find(msg => msg.isAuditMessage && msg.auditIssues);
+        if (auditMessage && auditMessage.auditIssues) {
+          auditIssues = auditMessage.auditIssues;
+        }
+      }
+
+      // Get feedback from messages (if rating < 4, user provided feedback)
+      let feedback: string | null = null;
+      if (ratingScore !== null && ratingScore < 4) {
+        // Find the feedback message (user message after feedback prompt)
+        const feedbackPromptIndex = messages.findIndex(msg => msg.isFeedbackPrompt);
+        if (feedbackPromptIndex >= 0 && feedbackPromptIndex < messages.length - 1) {
+          const feedbackMessage = messages[feedbackPromptIndex + 1];
+          if (feedbackMessage && feedbackMessage.sender === MessageSender.USER && feedbackMessage.text) {
+            feedback = feedbackMessage.text;
+          }
+        }
+      }
+
+      // Get pageTypeOther from userResponses if pageType contains "Other:"
+      let pageTypeOther: string | null = null;
+      if (currentFlow === 'newWebsite' && userResponses.pageType && userResponses.pageType.startsWith('Other: ')) {
+        pageTypeOther = userResponses.pageType.replace('Other: ', '');
+      }
+
+      // Format session data (pass pageTypeOther if available)
+      const sessionData = formatSessionDataForGoogleChat(
+        currentFlow || 'newWebsite',
+        userResponses,
+        email,
+        sessionStartTimestamp,
+        ratingScore,
+        feedback,
+        auditIssues.length > 0 ? auditIssues : undefined,
+        pageTypeOther
+      );
+
+      // Convert to Google Chat card format
+      const googleChatPayload = formatSessionDataAsGoogleChatCard(sessionData);
+
+      // Send to webhook (async, don't block UI)
+      sendSessionRecordToGoogleChat(googleChatPayload).catch((error) => {
+        logger.error('Error sending session record to Google Chat:', error);
+        // Don't block session closure on webhook failure
+      });
+    } catch (error: any) {
+      logger.error('Error preparing session record for Google Chat:', error);
+      // Don't block session closure on error
+    }
   };
 
   const handleReferencesAndCompetitorsSubmit = (entries: Array<{ url: string; description: string }>) => {
@@ -169,11 +274,12 @@ const useChat = () => {
     moveToNextQuestion(updatedResponses);
   };
 
-  const handleDesignProviderChange = (provider: 'anthropic' | 'openai' | 'gemini') => {
-    setDesignProvider(provider);
-  };
 
   useEffect(() => {
+    // Check session limit on initialization
+    const limitReached = isSessionLimitReached();
+    setSessionLimitReached(limitReached);
+
     const savedState = loadChatState();
     if (savedState) {
       setMessages(savedState.messages);
@@ -231,13 +337,13 @@ const useChat = () => {
 
     const questionKey = questionOrder[currentQuestionIndex];
     if (!questionKey) {
-      logger.warn(`Invalid question index: ${currentQuestionIndex} for flow: ${currentFlow}`);
+      logger.error(`Invalid question index: ${currentQuestionIndex} for flow: ${currentFlow}`);
       return null;
     }
 
     const question = questions[questionKey];
     if (!question) {
-      logger.warn(`Question not found for key: ${questionKey} in flow: ${currentFlow}`);
+      logger.error(`Question not found for key: ${questionKey} in flow: ${currentFlow}`);
       return null;
     }
 
@@ -264,8 +370,8 @@ const useChat = () => {
       if (!nextQuestionInfo) {
         // All questions completed
         setCurrentPhase(WorkflowPhase.NEW_WEBSITE_COMPLETE);
-        // Trigger HTML generation
-        generateHtml();
+        // Trigger HTML generation with fresh responses
+        generateHtml(updatedResponses);
       } else {
         setCurrentQuestionIndex(nextQuestionInfo.index);
         setCurrentPhase(getPhaseFromString(nextQuestionInfo.question.phase));
@@ -291,8 +397,10 @@ const useChat = () => {
         if (responsesToCheck.redesignCurrentUrl && responsesToCheck.redesignCurrentUrl.trim()) {
           // Show loader instead of completion message
           setIsCapturingScreenshot(true);
-          setScreenshotProgressText('Analyzing your page');
-          captureWebpageScreenshotAndLog(responsesToCheck.redesignCurrentUrl);
+          setScreenshotProgressText(getLoaderMessage('reviewing_page'));
+          // Pass responsesToCheck to ensure reference website analysis uses fresh data
+          // (React state updates are async, so userResponses might be stale)
+          captureWebpageScreenshotAndLog(responsesToCheck.redesignCurrentUrl, responsesToCheck);
       } else {
           // No URL provided for analysis; allow user to move forward to generate redesign
           const auditMessage: Message = {
@@ -313,8 +421,7 @@ const useChat = () => {
         );
         
         if (!nextQuestionInfo) {
-          logger.error(`Redesign question navigation failed at index ${nextIndex}`);
-          addMessage("I encountered an error. Please refresh the page and try again.", MessageSender.BOT);
+          handleError(new Error(`Redesign question navigation failed at index ${nextIndex}`), 'navigating to next question');
           return;
         }
         
@@ -379,26 +486,17 @@ const useChat = () => {
     const updatedResponses = { ...userResponses };
     
     if (currentQuestion.phase === 'NewWebsiteBusiness') {
-      const validationError = validateNonEmpty(response, VALIDATION_MESSAGES.business);
-      if (validationError) {
-        addMessage(validationError, MessageSender.BOT);
-        return;
-      }
-      updatedResponses.business = response.trim();
+      const trimmed = validateAndTrim(response, VALIDATION_MESSAGES.business, addMessage);
+      if (!trimmed) return;
+      updatedResponses.business = trimmed;
     } else if (currentQuestion.phase === 'NewWebsiteAudience') {
-      const validationError = validateNonEmpty(response, VALIDATION_MESSAGES.audience);
-      if (validationError) {
-        addMessage(validationError, MessageSender.BOT);
-        return;
-      }
-      updatedResponses.audience = response.trim();
+      const trimmed = validateAndTrim(response, VALIDATION_MESSAGES.audience, addMessage);
+      if (!trimmed) return;
+      updatedResponses.audience = trimmed;
     } else if (currentQuestion.phase === 'NewWebsiteGoals') {
-      const validationError = validateNonEmpty(response, VALIDATION_MESSAGES.goals);
-      if (validationError) {
-        addMessage(validationError, MessageSender.BOT);
-        return;
-      }
-      updatedResponses.goals = response.trim();
+      const trimmed = validateAndTrim(response, VALIDATION_MESSAGES.goals, addMessage);
+      if (!trimmed) return;
+      updatedResponses.goals = trimmed;
     } else if (currentQuestion.phase === 'NewWebsitePageType') {
       // Check if user selected "Other" (either via button click or typing)
       if (isOtherOption(response)) {
@@ -415,13 +513,9 @@ const useChat = () => {
         updatedResponses.brandDetails = '';
         // Store empty string to indicate "I don't have any"
       } else {
-        // Validate non-empty response
-        const validationError = validateNonEmpty(response, VALIDATION_MESSAGES.brandDetails);
-        if (validationError) {
-          addMessage(validationError, MessageSender.BOT);
-          return;
-        }
-        updatedResponses.brandDetails = response.trim();
+        const trimmed = validateAndTrim(response, VALIDATION_MESSAGES.brandDetails, addMessage);
+        if (!trimmed) return;
+        updatedResponses.brandDetails = trimmed;
       }
     }
     // ReferencesAndCompetitors is now handled by the custom component, not text input
@@ -471,13 +565,12 @@ const useChat = () => {
       moveToNextQuestion(updatedResponses);
       return;
     } else if (currentQuestion.phase === 'RedesignAudience') {
-      const validationError = validateNonEmpty(response, VALIDATION_MESSAGES.audience);
-      if (validationError) {
-        addMessage(validationError, MessageSender.BOT);
+      const trimmed = validateAndTrim(response, VALIDATION_MESSAGES.audience, addMessage);
+      if (!trimmed) {
         setUserResponses(updatedResponses);
         return;
       }
-      updatedResponses.redesignAudience = response.trim();
+      updatedResponses.redesignAudience = trimmed;
       // Continue to move to next question
     } else if (currentQuestion.phase === 'RedesignIssues') {
       const trimmed = response.trim();
@@ -529,47 +622,91 @@ const useChat = () => {
     moveToNextQuestion(updatedResponses);
   };
 
-  const startNewWebsiteFlow = () => {
-    addMessage("Excellent! Creating a new webpage from scratch is exciting. Let me ask you a few questions to understand your needs better.", MessageSender.BOT);
+  /**
+   * Starts a flow with the given configuration
+   * @param flowType - The type of flow to start
+   * @param welcomeMessage - The welcome message to show
+   * @param questions - The questions object for the flow
+   * @param questionOrder - The question order array for the flow
+   */
+  const startFlow = (
+    flowType: 'newWebsite' | 'redesign',
+    welcomeMessage: string,
+    questions: Record<string, any>,
+    questionOrder: string[]
+  ) => {
+    // Generate session ID and set start timestamp when flow starts
+    getOrCreateSessionId();
+    setSessionStartTimestamp();
+    
+    addMessage(welcomeMessage, MessageSender.BOT);
     setTimeout(() => {
-      setCurrentQuestionIndex(0);
-      setCurrentFlow('newWebsite');
-      const firstQuestion = NEW_WEBSITE_QUESTIONS[NEW_WEBSITE_QUESTION_ORDER[0]];
-      if (!firstQuestion) {
-        logger.error('First question not found in new website flow');
-        addMessage("I encountered an error starting the flow. Please refresh the page and try again.", MessageSender.BOT);
-        return;
+      try {
+        setCurrentQuestionIndex(0);
+        setCurrentFlow(flowType);
+        // Clear screenshot from previous redesign flow when starting a new flow
+        setRedesignScreenshotBase64(null);
+        const firstQuestion = questions[questionOrder[0]];
+        
+        if (!firstQuestion) {
+          handleError(new Error(`First question not found in ${flowType} flow`), 'starting the flow');
+          return;
+        }
+        
+        setCurrentPhase(getPhaseFromString(firstQuestion.phase));
+        const isRefsAndCompetitors = isReferencesAndCompetitorsPhase(firstQuestion.phase);
+        addMessage(firstQuestion.question, MessageSender.BOT, { isReferencesAndCompetitorsPrompt: isRefsAndCompetitors });
+      } catch (error: any) {
+        handleError(error, `starting ${flowType} flow`);
       }
-      setCurrentPhase(getPhaseFromString(firstQuestion.phase));
-      const isRefsAndCompetitors = isReferencesAndCompetitorsPhase(firstQuestion.phase);
-      addMessage(firstQuestion.question, MessageSender.BOT, { isReferencesAndCompetitorsPrompt: isRefsAndCompetitors });
     }, 500);
   };
 
+  const startNewWebsiteFlow = () => {
+    startFlow(
+      'newWebsite',
+      "Excellent! Creating a new webpage from scratch is exciting. Let me ask you a few questions to understand your needs better.",
+      NEW_WEBSITE_QUESTIONS,
+      NEW_WEBSITE_QUESTION_ORDER
+    );
+  };
+
   const startRedesignFlow = () => {
-    addMessage("Great! I'd be happy to help you with your webpage redesign. Let me ask you a few questions to understand your current webpage and what you're aiming for.", MessageSender.BOT);
-    setTimeout(() => {
-      setCurrentQuestionIndex(0);
-      setCurrentFlow('redesign');
-      const firstQuestion = REDESIGN_WEBSITE_QUESTIONS[REDESIGN_WEBSITE_QUESTION_ORDER[0]];
-      if (!firstQuestion) {
-        logger.error('First question not found in redesign flow');
-        addMessage("I encountered an error starting the flow. Please refresh the page and try again.", MessageSender.BOT);
-        return;
-      }
-      setCurrentPhase(getPhaseFromString(firstQuestion.phase));
-      const isRefsAndCompetitors = isReferencesAndCompetitorsPhase(firstQuestion.phase);
-      addMessage(firstQuestion.question, MessageSender.BOT, { isReferencesAndCompetitorsPrompt: isRefsAndCompetitors });
-    }, 500);
+    startFlow(
+      'redesign',
+      "Great! I'd be happy to help you with your webpage redesign. Let me ask you a few questions to understand your current webpage and what you're aiming for.",
+      REDESIGN_WEBSITE_QUESTIONS,
+      REDESIGN_WEBSITE_QUESTION_ORDER
+    );
+  };
+
+  /**
+   * Checks if text matches redesign keywords
+   */
+  const isRedesignChoice = (text: string, normalizedText: string): boolean => {
+    const redesignKeywords = ['redesign', 'webpage redesign', 'website redesign'];
+    const exactMatches = ['Webpage Redesign', 'Website Redesign'];
+    return redesignKeywords.some(keyword => normalizedText.includes(keyword)) || 
+           exactMatches.includes(text);
+  };
+
+  /**
+   * Checks if text matches new website keywords
+   */
+  const isNewWebsiteChoice = (text: string, normalizedText: string): boolean => {
+    const newWebsiteKeywords = ['new webpage', 'new website', 'from scratch', 'scratch'];
+    const exactMatches = ['New Webpage from Scratch', 'New Website from Scratch'];
+    return newWebsiteKeywords.some(keyword => normalizedText.includes(keyword)) || 
+           exactMatches.includes(text);
   };
 
   const handleInitialChoice = (text: string): boolean => {
     const normalizedText = text.toLowerCase().trim();
     
-    if (normalizedText.includes('webpage redesign') || normalizedText.includes('website redesign') || normalizedText.includes('redesign') || text === "Webpage Redesign" || text === "Website Redesign") {
+    if (isRedesignChoice(text, normalizedText)) {
       startRedesignFlow();
       return true;
-    } else if (normalizedText.includes('new webpage') || normalizedText.includes('new website') || normalizedText.includes('from scratch') || normalizedText.includes('scratch') || text === "New Webpage from Scratch" || text === "New Website from Scratch") {
+    } else if (isNewWebsiteChoice(text, normalizedText)) {
       startNewWebsiteFlow();
       return true;
     }
@@ -716,91 +853,172 @@ const useChat = () => {
     return false;
   };
 
-  const handleFileUpload = (files: File[]) => {
-    if (files.length === 0) {
-      addMessage("No files were selected. Please try again or choose 'Describe in Text' instead.", MessageSender.BOT);
-      return;
-    }
-    
+
+  /**
+   * Processes reference websites silently (no UI updates)
+   * @param referencesString - The stored references string from userResponses
+   * @param apiKey - The Gemini API key (must be validated before calling)
+   * @param flowName - Name of the flow for logging purposes
+   * @param storageKey - Key to store results in userResponses ('referenceWebsiteAnalysis' or 'redesignReferenceWebsiteAnalysis')
+   * @returns Promise that resolves with array of analysis results (or empty array if none)
+   */
+  const processReferenceWebsitesSilently = async (
+    referencesString: string | undefined,
+    apiKey: string,
+    flowName: string,
+    storageKey: 'referenceWebsiteAnalysis' | 'redesignReferenceWebsiteAnalysis'
+  ): Promise<any[]> => {
     try {
-      const updatedResponses = { ...userResponses };
-      
-      // Determine which flow we're in and update the appropriate field
-      if (currentFlow === 'redesign') {
-        updatedResponses.redesignBrandFiles = files;
-      } else {
-        updatedResponses.brandFiles = files;
+      // Validate API key
+      if (!apiKey || !apiKey.trim()) {
+        return [];
       }
-      
-      setUserResponses(updatedResponses);
-      setShowFileUpload(false);
-      
-      // Show confirmation
-      addMessage(`Great! I've received ${files.length} file(s). Thank you for sharing your brand guidelines!`, MessageSender.BOT);
-      
-      // Move to next question
-      setTimeout(() => {
-        moveToNextQuestion(updatedResponses);
-      }, 500);
-    } catch (error) {
-      logger.error("Error handling file upload:", error);
-      addMessage("There was an error processing your files. Please try again or choose 'Describe in Text' instead.", MessageSender.BOT);
+
+      if (!referencesString || !referencesString.trim()) {
+        // No reference websites provided, skip processing
+        return [];
+      }
+
+      const entries = parseReferencesString(referencesString);
+      if (entries.length === 0) {
+        // No valid entries found
+        return [];
+      }
+
+      // Process reference websites sequentially (silently, no UI updates)
+      const results = await processReferenceWebsites(entries, apiKey);
+
+      // Store results silently (only successful ones are returned)
+      if (results.length > 0) {
+        setUserResponses((prev) => {
+          const updated = {
+            ...prev,
+            [storageKey]: results,
+          };
+          return updated;
+        });
+      }
+
+      return results;
+    } catch (error: any) {
+      // Log error but don't show to user (silent processing)
+      logger.error(`Error processing reference websites for ${flowName}:`, error);
+      return [];
     }
   };
 
-  const captureWebpageScreenshotAndLog = async (url: string) => {
+  /**
+   * Processes reference websites for redesign flow (silently, before UI audit)
+   * @param apiKey - The Gemini API key
+   * @param responses - Optional UserResponses object to use instead of state (for fresh data)
+   * @returns Array of analysis results (or empty array if none)
+   */
+  const processReferenceWebsitesForRedesign = async (apiKey: string, responses?: UserResponses): Promise<any[]> => {
+    // Use provided responses if available, otherwise fall back to state
+    // This is important because React state updates are async, and we need fresh data
+    const referencesString = responses?.redesignReferencesAndCompetitors ?? userResponses.redesignReferencesAndCompetitors;
+    
+    
+    return await processReferenceWebsitesSilently(
+      referencesString,
+      apiKey,
+      'redesign',
+      'redesignReferenceWebsiteAnalysis'
+    );
+  };
+
+  /**
+   * Processes reference websites for new website flow (silently, before HTML generation)
+   * @param apiKey - The Gemini API key
+   * @param responses - Optional fresh user responses (to avoid stale state issues)
+   * @returns Array of analysis results (or empty array if none)
+   */
+  const processReferenceWebsitesForNewWebsite = async (apiKey: string, responses?: UserResponses): Promise<any[]> => {
+    // Use provided responses or fallback to state
+    // This is important because React state updates are async, and we need fresh data
+    const responsesToUse = responses || userResponses;
+    const referencesString = responsesToUse.referencesAndCompetitors;
+    
+    
+    return await processReferenceWebsitesSilently(
+      referencesString,
+      apiKey,
+      'new website',
+      'referenceWebsiteAnalysis'
+    );
+  };
+
+  const captureWebpageScreenshotAndLog = async (url: string, responses?: UserResponses) => {
     try {
       const apiKey = getAndValidateApiKey();
 
-    // Validate API key
+      // Validate API key
       if (!apiKey) {
         logger.error('Gemini API key is required for screenshot analysis');
         resetScreenshotState();
-      addMessage(
+        addMessage(
           buildMissingApiKeyMessage('analyze your webpage screenshot'),
-        MessageSender.BOT
-      );
+          MessageSender.BOT
+        );
         return;
       }
 
       // Update progress text
-      setScreenshotProgressText('Analyzing your page');
+      setScreenshotProgressText(getLoaderMessage('analyzing_references'));
       
       // Small delay to show the first message
       await new Promise(resolve => setTimeout(resolve, 1000));
       
-      // Update progress text
-      setScreenshotProgressText('Reviewing your page');
+      // Process reference websites first (silently, while loader is showing)
+      // Process reference websites before UI audit (pass responses to avoid stale state)
+      // Check if there are reference websites to process (to determine if we'll make Gemini calls)
+      const responsesToCheck = responses || userResponses;
+      const referencesString = responsesToCheck.redesignReferencesAndCompetitors;
+      const hasReferenceWebsites = referencesString && referencesString.trim().length > 0;
       
-      // Capture the webpage screenshot
-      const imageBuffer = await captureWebpageScreenshot(url);
+      try {
+        await processReferenceWebsitesForRedesign(apiKey, responses);
+      } catch (error: any) {
+        logger.error('Reference website analysis failed, continuing with UI audit:', error);
+      }
       
-      // Convert ArrayBuffer to binary string
-      const binaryString = arrayBufferToBinaryString(imageBuffer);
+      // Add delay between consecutive Gemini calls (reference websites → UI audit)
+      if (hasReferenceWebsites) {
+        await addModelCallDelay('gemini', 'gemini');
+      }
       
-      // Convert ArrayBuffer to Uint8Array for byte-level inspection
-      const bytes = new Uint8Array(imageBuffer);
+      // Update progress text for UI audit
+      setScreenshotProgressText(getLoaderMessage('reviewing_page'));
       
-      // Debug log the binary result (dev only)
-      logger.debug('=== Webpage Screenshot Binary Data ===');
-      logger.debug('URL:', url);
-      logger.debug('Binary string length:', binaryString.length, 'characters');
-      logger.debug('Buffer size:', imageBuffer.byteLength, 'bytes');
-      logger.debug('First 100 bytes:', Array.from(bytes.slice(0, 100)));
+      // Capture the webpage screenshot (with text extraction if reuse content is requested)
+      const shouldExtractText = userResponses.redesignReuseContent === true;
+      const screenshotResult = await captureWebpageScreenshotWithText(url, shouldExtractText);
       
-      // Convert image to base64 for Gemini API
+      const imageBuffer = screenshotResult.image;
+      
+      
+      // Store extracted text if available (even though not currently used in prompt)
+      if (screenshotResult.text) {
+        setUserResponses((prev) => ({
+          ...prev,
+          redesignExtractedText: screenshotResult.text,
+        }));
+      }
+      
+      // Convert image to base64 for Gemini API (do not convert to binary)
       const imageBase64 = arrayBufferToBase64(imageBuffer);
       
-      // Send screenshot to Gemini AI for UI/UX audit
+      // Store screenshot base64 in state and use local variable to avoid closure issues
+      setRedesignScreenshotBase64(imageBase64);
+      
+      
+      // Send screenshot to Gemini for UI/UX audit (image only, extracted text is stored separately for content reuse)
       const auditResponse = await analyzeScreenshotWithGemini(
         imageBase64,
         UI_UX_AUDIT_PROMPT,
         apiKey
       );
       
-      // Debug log the Gemini response (dev only)
-      logger.debug('=== Gemini UI/UX Audit Response ===');
-      logger.debug(auditResponse);
       
       // Parse the audit response to extract issues
       const issues = parseAuditResponse(auditResponse);
@@ -821,226 +1039,317 @@ const useChat = () => {
       } else {
         // Fallback message if no issues were parsed
         // This could happen if the response format was unexpected
-        logger.warn('No issues parsed from audit response. Response:', auditResponse);
         addMessage(
           'I\'ve completed the UI/UX audit of your webpage. The analysis didn\'t identify any critical issues, or the response format was unexpected.',
           MessageSender.BOT
         );
       }
+      
+      // Automatically proceed with specification and HTML generation (no button click required)
+      // Validate that we have the necessary information
+      if (!userResponses.redesignAudience) {
+        return;
+      }
+      
+      // Validate Gemini API key (using Gemini for specification generation due to context length limitations)
+      const geminiApiKeyForSpec = getAndValidateApiKey();
+      if (!geminiApiKeyForSpec) {
+        addMessage(
+          buildMissingApiKeyMessage('generate redesign specification'),
+          MessageSender.BOT
+        );
+        return;
+      }
+
+      // Add 5-second delay before specification generation (Gemini → Gemini, same model)
+      await addModelCallDelay('gemini', 'gemini');
+
+      // Show loader for specification generation
+      setIsGeneratingHtml(true);
+      setGenerationProgressText(getLoaderMessage('generating_spec_redesign'));
+      
+      try {
+        // Prepare updated responses that include extracted text (if available)
+        // Use the extracted text from screenshotResult if reuse content was requested
+        const responsesWithExtractedText = {
+          ...userResponses,
+          ...(screenshotResult.text && { redesignExtractedText: screenshotResult.text }),
+        };
+        
+        // Log if extracted text is being included for content reuse
+        if (userResponses.redesignReuseContent === true && screenshotResult.text) {
+        } else if (userResponses.redesignReuseContent === true && !screenshotResult.text) {
+        }
+        
+        // Build combined prompt for Gemini (system + user prompt combined)
+        // Pass responses with extracted text to ensure content reuse works correctly
+        const prompt = buildRedesignSpecificationPromptForGemini(responsesWithExtractedText);
+        
+        // Use the local variable (imageBase64) instead of state to avoid closure issues
+        // The screenshot was captured earlier in this function and stored in imageBase64
+        const screenshotBase64 = imageBase64;
+        
+        if (!screenshotBase64) {
+          addMessage(
+            'Screenshot not available. Please refresh and try the redesign flow again.',
+            MessageSender.BOT
+          );
+          resetGenerationState();
+          return;
+        }
+        
+        // Call Gemini with combined prompt and screenshot image
+        const specificationResponse = await generateRedesignSpecificationWithGemini(
+          prompt,
+          screenshotBase64,
+          geminiApiKeyForSpec
+        );
+        
+        // Clear screenshot from memory immediately after successful API call (no longer needed)
+        setRedesignScreenshotBase64(null);
+        
+        // Extract and clean JSON from response (remove markdown code blocks if present)
+        const cleanedResponse = extractJsonFromResponse(specificationResponse) || specificationResponse;
+        
+        // Output the cleaned response to console
+        
+        
+        // Validate Anthropic API key for HTML generation (using Claude Opus with Sonnet fallback)
+        const anthropicApiKey = getAndValidateAnthropicApiKey();
+        if (!anthropicApiKey) {
+          addMessage(
+            buildMissingApiKeyMessage('generate redesigned webpage HTML', true),
+            MessageSender.BOT
+          );
+          resetGenerationState();
+          setRedesignScreenshotBase64(null);
+          return;
+        }
+        
+        // No delay needed: Gemini → Claude (different models)
+        // Generate HTML immediately from the redesign specification
+        setGenerationProgressText(getLoaderMessage('generating_html_redesign'));
+        
+        try {
+          // Call Claude (Opus with Sonnet fallback) with the redesign specification JSON
+          const htmlResponse = await generateHtmlFromRedesignSpecificationWithFallback(
+            cleanedResponse,
+            anthropicApiKey
+          );
+          
+          // Extract HTML from response
+          setGenerationProgressText(getLoaderMessage('processing_html'));
+          const htmlResult = processHtmlResponse(
+            htmlResponse,
+            "Your redesigned webpage is ready! Here's a preview:"
+          );
+          
+          if (!htmlResult.success || !htmlResult.message) {
+            throw new Error(htmlResult.error || 'Failed to extract HTML from response');
+          }
+          
+          // Add success message with HTML preview
+          setMessages((prev) => [...prev, htmlResult.message!]);
+          enqueueRatingPrompt();
+          
+        } catch (htmlError: any) {
+          handleError(htmlError, 'generating redesigned webpage HTML');
+        }
+      } catch (error: any) {
+        // Clear screenshot from memory on error (to free up memory)
+        setRedesignScreenshotBase64(null);
+        handleError(error, 'generating redesign specification');
+      } finally {
+        resetGenerationState();
+        // Ensure screenshot is cleared (safety net, should already be cleared above)
+        setRedesignScreenshotBase64(null);
+      }
     } catch (error: any) {
-      logger.error('Error capturing webpage screenshot or analyzing with Gemini:', error);
       resetScreenshotState();
-      addMessage(buildUserFriendlyErrorMessage(error, 'analyzing your webpage'), MessageSender.BOT);
+      handleError(error, 'analyzing your webpage');
     }
   };
 
+  // Kept for backward compatibility but redesign flow now proceeds automatically after audit
   const handleAuditContinue = async () => {
-    // User chose to move forward; generate the redesigned webpage now
-    // Validate that we have the necessary information
-    if (!userResponses.redesignAudience) {
+    // No-op: redesign flow proceeds automatically
+  };
+
+
+  const generateHtml = async (responses?: UserResponses) => {
+    // Use provided responses or fallback to state (to avoid stale state issues)
+    const responsesToUse = responses || userResponses;
+    
+    // Show loader for reference website analysis
+    setIsGeneratingHtml(true);
+    setGenerationProgressText(getLoaderMessage('analyzing_references'));
+    
+    // Process reference websites before HTML generation (optional, failures don't block flow)
+    const apiKey = getAndValidateApiKey();
+    let analysisResults: any[] = [];
+    
+    if (apiKey) {
+      try {
+        // Get results directly from the function (pass fresh responses to avoid React state timing issues)
+        analysisResults = await processReferenceWebsitesForNewWebsite(apiKey, responsesToUse);
+      } catch (error: any) {
+        // Log error but continue to output any available results
+        logger.error('Reference website analysis encountered errors:', error);
+        // Try to get results from provided responses or state as fallback
+        analysisResults = responsesToUse.referenceWebsiteAnalysis || userResponses.referenceWebsiteAnalysis || [];
+      }
+    } else {
+      // No API key, but check if results already exist in provided responses or state
+      analysisResults = responsesToUse.referenceWebsiteAnalysis || userResponses.referenceWebsiteAnalysis || [];
+    }
+
+    // Reference website analysis completed
+    
+    // Now execute Claude with the new prompt structure
+    const anthropicApiKey = getAndValidateAnthropicApiKey();
+    
+    if (!anthropicApiKey) {
+      logger.error('Anthropic API key is required for specification generation');
+      resetGenerationState();
       addMessage(
-        "I'm missing some information needed to generate your redesigned webpage. Please refresh and try again.",
+        buildMissingApiKeyMessage('generate webpage specification', true),
         MessageSender.BOT
       );
       return;
+    }
+
+    // Ensure we have the latest analysis results in userResponses
+    // Update state if we have fresh results that might not be in state yet
+    if (analysisResults.length > 0) {
+      setUserResponses((prev) => ({
+        ...prev,
+        referenceWebsiteAnalysis: analysisResults,
+      }));
     }
     
-    // Start the generation process with a 1-minute delay to space out API calls
-    // This helps avoid rate limit issues after the analysis step
-    await generateRedesignHtmlWithDelay();
-  };
-
-  const generateRedesignHtmlWithDelay = async () => {
-    // Use selected provider for redesign generation (Gemini still used for analysis)
-    const providerConfig = (() => {
-      if (designProvider === 'anthropic') {
-        return {
-          key: getAndValidateAnthropicApiKey(),
-          missingMsg: buildMissingApiKeyMessage('generate your redesigned webpage', false, true),
-          fn: generateHtmlWithAnthropic,
-        };
-      }
-      if (designProvider === 'openai') {
-        return {
-          key: getAndValidateOpenAIApiKey(),
-          missingMsg: buildMissingApiKeyMessage('generate your redesigned webpage', true, false),
-          fn: generateHtmlWithOpenAI,
-        };
-      }
-      // default to Gemini for generation if selected
-      return {
-        key: getAndValidateApiKey(),
-        missingMsg: buildMissingApiKeyMessage('generate your redesigned webpage', false, false),
-        fn: generateHtmlWithGemini,
-      };
-    })();
-
-    if (!providerConfig.key) {
-      addMessage(providerConfig.missingMsg, MessageSender.BOT);
-      return;
-    }
-
-    // Show loader immediately
-    setIsGeneratingHtml(true);
-    setIsLoading(true);
-
+    // Get the latest userResponses (with analysis results) for prompt building
+    // Merge provided responses with analysis results
+    const responsesForPrompt = analysisResults.length > 0
+      ? { ...responsesToUse, referenceWebsiteAnalysis: analysisResults }
+      : responsesToUse;
+    
+    // Build user prompt with all collected inputs
+    const userPrompt = buildNewWebsiteUserPrompt(responsesForPrompt);
+    
+    
+    // Update loader for specification generation
+    setGenerationProgressText(getLoaderMessage('generating_spec_new'));
+    
     try {
-      // 1-minute delay to space out API calls and avoid rate limits
-      // Show countdown/progress messages during the wait
-      const delayMs = 60000; // 1 minute
-      const updateInterval = 10000; // Update message every 10 seconds
-      const startTime = Date.now();
-      
-      const updateProgress = () => {
-        const elapsed = Date.now() - startTime;
-        const remaining = Math.ceil((delayMs - elapsed) / 1000);
-        
-        if (remaining > 0) {
-          setGenerationProgressText(`Preparing to generate your redesigned webpage... (${remaining}s)`);
-        } else {
-          setGenerationProgressText('Preparing to generate your redesigned webpage...');
-        }
-      };
-
-      // Update progress immediately
-      updateProgress();
-      
-      // Update progress every 10 seconds during the wait
-      const progressInterval = setInterval(() => {
-        const elapsed = Date.now() - startTime;
-        if (elapsed < delayMs) {
-          updateProgress();
-        } else {
-          clearInterval(progressInterval);
-        }
-      }, updateInterval);
-
-      // Wait for the delay period
-      await new Promise(resolve => setTimeout(resolve, delayMs));
-      clearInterval(progressInterval);
-
-      // Now proceed with generation
-      await generateRedesignHtml(providerConfig.key, providerConfig.fn);
-    } catch (error: any) {
-      logger.error('Error in delayed generation process:', error);
-      addMessage(buildUserFriendlyErrorMessage(error, 'generating your redesigned webpage'), MessageSender.BOT);
-      resetGenerationState();
-    }
-  };
-
-  const generateRedesignHtml = async (apiKey: string, generateFn: (prompt: string, apiKey: string) => Promise<string>) => {
-    try {
-      // Build the redesign prompt from redesign-specific inputs
-      const fullPrompt = buildRedesignPrompt(userResponses);
-
-      // Generate HTML using selected provider (Gemini/OpenAI/Anthropic) for redesign route
-      setGenerationProgressText('Connecting to AI...');
-      const rawResponse = await generateFn(fullPrompt, apiKey);
-
-      // Process HTML
-      setGenerationProgressText('Processing HTML...');
-      const extractionResult = extractHtmlFromResponse(rawResponse);
-
-      if (!extractionResult.success) {
-        throw new Error(extractionResult.error || 'Failed to extract HTML from response');
-      }
-
-      // Add success message with HTML preview
-      const htmlMessage: Message = {
-        id: `html-redesign-${Date.now()}`,
-        text: "Your redesigned webpage is ready! Here's a preview:",
-        sender: MessageSender.BOT,
-        htmlContent: extractionResult.html,
-        isHtmlMessage: true,
-      };
-      setMessages((prev) => [...prev, htmlMessage]);
-      enqueueRatingPrompt();
-    } catch (error: any) {
-      logger.error('Error generating redesigned HTML:', error);
-      addMessage(buildUserFriendlyErrorMessage(error, 'generating your redesigned webpage'), MessageSender.BOT);
-    } finally {
-      resetGenerationState();
-    }
-  };
-
-  const generateHtml = async () => {
-    // Use selected provider for scratch route generation
-    const providerConfig = (() => {
-      if (designProvider === 'anthropic') {
-        return {
-          key: getAndValidateAnthropicApiKey(),
-          missingMsg: buildMissingApiKeyMessage('generate your webpage', false, true),
-          fn: generateHtmlWithAnthropic,
-        };
-      }
-      if (designProvider === 'openai') {
-        return {
-          key: getAndValidateOpenAIApiKey(),
-          missingMsg: buildMissingApiKeyMessage('generate your webpage', true, false),
-          fn: generateHtmlWithOpenAI,
-        };
-      }
-      return {
-        key: getAndValidateApiKey(),
-        missingMsg: buildMissingApiKeyMessage('generate your webpage', false, false),
-        fn: generateHtmlWithGemini,
-      };
-    })();
-
-    // Validate API key
-    if (!providerConfig.key) {
-      addMessage(providerConfig.missingMsg, MessageSender.BOT);
-      return;
-    }
-
-    // Validate required fields
-    if (!userResponses.pageType) {
-      addMessage(
-        "I'm missing some information needed to generate your webpage. Please refresh and try again.",
-        MessageSender.BOT
+      // Call Claude (Sonnet) with system and user prompts
+      const specificationResponse = await generateSpecificationWithSonnet(
+        NEW_WEBSITE_SYSTEM_PROMPT,
+        userPrompt,
+        anthropicApiKey
       );
-      return;
-    }
-
-    setIsGeneratingHtml(true);
-    setIsLoading(true);
-
-    try {
-      // Build the prompt (keeping the same prompt as before)
-      const commonPrompt = buildCommonPrompt(userResponses);
-      const pageTypePrompt = getPageTypePrompt(userResponses.pageType);
-      const fullPrompt = buildFullPrompt(commonPrompt, pageTypePrompt);
-
-      // Generate HTML
-      setGenerationProgressText('Connecting to AI...');
-      const rawResponse = await providerConfig.fn(fullPrompt, providerConfig.key);
-
-      // Process HTML
-      setGenerationProgressText('Processing HTML...');
-      const extractionResult = extractHtmlFromResponse(rawResponse);
-
-      if (!extractionResult.success) {
-        throw new Error(extractionResult.error || 'Failed to extract HTML from response');
+      
+      // Extract and clean JSON from response (remove markdown code blocks if present)
+      const cleanedResponse = extractJsonFromResponse(specificationResponse) || specificationResponse;
+      
+      // Output the cleaned response to console
+      
+      
+      // Update progress text immediately after specification is received
+      setGenerationProgressText(getLoaderMessage('preparing_html'));
+      
+      // Small delay to ensure UI updates
+      await new Promise(resolve => setTimeout(resolve, 500));
+      
+      // Wait 1 minute before generating HTML
+      setGenerationProgressText(getLoaderMessage('preparing_html'));
+      
+      // Wait 60 seconds (1 minute) with progress updates
+      const waitTime = 60000; // 60 seconds
+      const updateInterval = 5000; // Update every 5 seconds
+      const totalUpdates = waitTime / updateInterval;
+      
+      for (let i = 0; i < totalUpdates; i++) {
+        await new Promise(resolve => setTimeout(resolve, updateInterval));
+        const remainingSeconds = Math.ceil((waitTime - (i + 1) * updateInterval) / 1000);
+        if (remainingSeconds > 0) {
+          const baseMessage = getLoaderMessage('preparing_html');
+          setGenerationProgressText(`${baseMessage} (${remainingSeconds}s remaining)`);
+        }
       }
-
-      // Add success message with HTML preview
-      const htmlMessage: Message = {
-        id: `html-${Date.now()}`,
-        text: "Your webpage is ready! Here's a preview:",
-        sender: MessageSender.BOT,
-        htmlContent: extractionResult.html,
-        isHtmlMessage: true,
-      };
-      setMessages((prev) => [...prev, htmlMessage]);
-      enqueueRatingPrompt();
+      
+      // Now generate HTML from the specification
+      setGenerationProgressText(getLoaderMessage('generating_html_new'));
+      
+      try {
+        // Call Claude (Opus with Sonnet fallback) with the specification JSON
+        const htmlResponse = await generateHtmlFromSpecificationWithFallback(cleanedResponse, anthropicApiKey);
+        
+        // Extract HTML from response
+        setGenerationProgressText(getLoaderMessage('processing_html'));
+        const htmlResult = processHtmlResponse(htmlResponse);
+        
+        if (!htmlResult.success || !htmlResult.message) {
+          throw new Error(htmlResult.error || 'Failed to extract HTML from response');
+        }
+        
+        // Add success message with HTML preview
+        setMessages((prev) => [...prev, htmlResult.message!]);
+        enqueueRatingPrompt();
+        
+      } catch (htmlError: any) {
+        handleError(htmlError, 'generating your webpage');
+      } finally {
+        resetGenerationState();
+      }
     } catch (error: any) {
-      logger.error('Error generating HTML:', error);
-      addMessage(buildUserFriendlyErrorMessage(error, 'generating your webpage'), MessageSender.BOT);
-    } finally {
-      resetGenerationState();
+      handleError(error, 'generating webpage specification');
     }
+    
   };
   
+  /**
+   * Starts a new chat session by clearing state and incrementing session count
+   * Checks session limit before allowing new session
+   */
+  const startNewChat = () => {
+    // Check if session limit has been reached
+    if (isSessionLimitReached()) {
+      setSessionLimitReached(true);
+      return;
+    }
+
+    // Clear chat state from localStorage
+    clearChatState();
+
+    // Clear session data (ID and timestamp)
+    clearSessionData();
+
+    // Increment session count
+    const newCount = incrementSessionCount();
+
+    // Check if limit reached after increment
+    if (newCount >= 2) {
+      setSessionLimitReached(true);
+    }
+
+    // Reset all state to initial values
+    setMessages([WELCOME_MESSAGE_1, WELCOME_MESSAGE_2]);
+    setCurrentPhase(WorkflowPhase.INITIAL);
+    setUserResponses({});
+    setCurrentQuestionIndex(0);
+    setCurrentFlow(null);
+    setSessionClosed(false);
+    setIsGeneratingHtml(false);
+    setIsLoading(false);
+    setGenerationProgressText(getLoaderMessage('generating_html_new'));
+    setIsCapturingScreenshot(false);
+    setScreenshotProgressText(getLoaderMessage('reviewing_page'));
+    setRatingRequested(false);
+    setRatingCompleted(false);
+    setRatingScore(null);
+    setRedesignScreenshotBase64(null);
+  };
+
   return { 
     messages, 
     sendMessage, 
@@ -1052,8 +1361,6 @@ const useChat = () => {
     getCurrentQuestionPlaceholder,
     shouldShowInputBar,
     userResponses,
-    showFileUpload,
-    handleFileUpload,
     getSelectedOptions,
     isGeneratingHtml,
     generationProgressText,
@@ -1064,9 +1371,9 @@ const useChat = () => {
     handleFeedbackSubmit,
     handleEmailSubmit,
     handleReferencesAndCompetitorsSubmit,
-    handleDesignProviderChange,
-    designProvider,
-    sessionClosed
+    sessionClosed,
+    sessionLimitReached,
+    startNewChat
   };
 };
 

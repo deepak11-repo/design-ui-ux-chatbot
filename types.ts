@@ -68,11 +68,17 @@ export interface UserResponses {
   hasCompetitors?: boolean;
   competitors?: string;
   referencesAndCompetitors?: string; // Combined field for references and competitors
+  referenceWebsiteAnalysis?: Array<{
+    url: string;
+    description: string;
+    analysis: any; // Validated JSON response from Gemini
+  }>; // Analysis results for reference websites (stored silently, not displayed)
   waitingForOtherInput?: 'pageType' | 'redesignIssues'; // Track which field is waiting for "Other" input
 
   // Website Redesign responses
   redesignCurrentUrl?: string;
   redesignReuseContent?: boolean;
+  redesignExtractedText?: string; // Extracted text content when reuse content is true
   redesignBusiness?: string;
   redesignAudience?: string;
   redesignIssues?: string;
@@ -85,4 +91,9 @@ export interface UserResponses {
   redesignHasCompetitors?: boolean;
   redesignCompetitors?: string;
   redesignReferencesAndCompetitors?: string; // Combined field for references and competitors
+  redesignReferenceWebsiteAnalysis?: Array<{
+    url: string;
+    description: string;
+    analysis: any; // Validated JSON response from Gemini
+  }>; // Analysis results for reference websites (stored silently, not displayed)
 }
