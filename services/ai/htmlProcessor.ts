@@ -23,10 +23,23 @@ export function extractHtmlFromResponse(response: string): HtmlExtractionResult 
   // Normalize the response (handle markdown code blocks if present)
   let normalizedResponse = response.trim();
 
-  // Remove markdown code blocks if present
-  normalizedResponse = normalizedResponse.replace(/^```html\s*/i, '');
-  normalizedResponse = normalizedResponse.replace(/^```\s*/i, '');
-  normalizedResponse = normalizedResponse.replace(/\s*```$/i, '');
+  // Remove markdown code fences more aggressively
+  // Handle various formats: ```html, ```, ```html\n, etc.
+  // Strategy: Remove code fences that appear at line boundaries first, then handle any remaining
+  
+  // Remove opening code fences at start of lines (with optional language identifier)
+  normalizedResponse = normalizedResponse.replace(/^```[a-z]*\s*\n?/gim, '');
+  
+  // Remove closing code fences at end of lines
+  normalizedResponse = normalizedResponse.replace(/\n?\s*```\s*$/gim, '');
+  
+  // Remove any remaining standalone code fences (```html or ```) anywhere in the text
+  // This handles cases where code fences appear mid-text or without proper line breaks
+  normalizedResponse = normalizedResponse.replace(/```html\s*/gi, '');
+  normalizedResponse = normalizedResponse.replace(/```\s*/g, '');
+  
+  // Clean up any remaining leading/trailing whitespace
+  normalizedResponse = normalizedResponse.trim();
 
   // Find the start of HTML
   // Look for <!DOCTYPE html> or <html> (case-insensitive)
@@ -66,6 +79,11 @@ export function extractHtmlFromResponse(response: string): HtmlExtractionResult 
 
   // Extract the HTML content
   let extractedHtml = normalizedResponse.substring(startIndex, endIndex);
+
+  // Final cleanup: Remove any markdown code fences that might have been captured within the HTML
+  // This handles edge cases where code fences appear inside the HTML content
+  extractedHtml = extractedHtml.replace(/```html\s*/gi, '');
+  extractedHtml = extractedHtml.replace(/```\s*/g, '');
 
   // If we found <!DOCTYPE html> but not <html>, we need to add it
   if (doctypeMatch && !htmlStartMatch) {
